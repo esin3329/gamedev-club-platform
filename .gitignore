@@ -34,10 +34,27 @@ yarn-error.log*
 .env*
 !.env.example
 
+# wrangler / Cloudflare
+.dev.vars
+.wrangler/
+wrangler.toml
+!wrangler.toml.example
+
 # vercel
 .vercel
+
+# Supabase local artifacts
+.supabase/
+supabase/.branches/
+supabase/.temp/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 .open-next/
+
+# secrets / credentials (redundant but explicit)
+*.pem
+*.key
+# Don't ignore scripts/scan-secrets.sh
+!scripts/scan-secrets.sh

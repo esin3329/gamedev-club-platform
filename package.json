@@ -13,7 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "./scripts/test-db.sh",
-    "test:all": "npm test && npm run test:db"
+    "test:all": "npm test && npm run test:db",
+    "scan:secrets": "./scripts/scan-secrets.sh",
+    "scan:secrets:all": "./scripts/scan-secrets.sh --all",
+    "precommit": "npm run scan:secrets && npm run lint"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
