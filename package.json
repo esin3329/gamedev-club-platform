@@ -11,7 +11,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:db": "./scripts/test-db.sh",
+    "test:all": "npm test && npm run test:db"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",

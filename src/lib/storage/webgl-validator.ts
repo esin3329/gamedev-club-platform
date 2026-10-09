@@ -26,7 +26,7 @@ export interface R2BucketLike {
 export interface WebGLValidationResult {
   valid: boolean;
   error?: string;
-  errorCode?: 'NO_INDEX_HTML' | 'INVALID_ZIP' | 'EMPTY_ZIP' | 'TOO_LARGE' | 'TOO_MANY_FILES' | 'READ_ERROR';
+  errorCode?: 'NO_INDEX_HTML' | 'INVALID_ZIP' | 'EMPTY_ZIP' | 'TOO_LARGE' | 'TOO_MANY_FILES' | 'READ_ERROR' | 'UNSAFE_PATH';
   indexHtmlPath?: string;
   basePath?: string;
   files: WebGLFileEntry[];
@@ -39,6 +39,21 @@ export interface WebGLFileEntry {
   compressedSize: number;
   uncompressedSize: number;
   isDirectory: boolean;
+}
+
+/**
+ * Check if a file path is safe (no path traversal or absolute paths)
+ * TC-F4-33: Reject paths with ../ or absolute paths
+ */
+function isPathSafe(path: string): boolean {
+  if (path.startsWith('/')) return false;
+  if (path.includes('../')) return false;
+  if (path.includes('..\\')) return false;
+  const normalized = path.split(/[/\\]/).filter(Boolean);
+  for (let i = 0; i < normalized.length; i++) {
+    if (normalized[i] === '..') return false;
+  }
+  return true;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -242,19 +257,7 @@ export async function validateWebGLZipFromR2(
       };
     }
     
-    // 2. 파일 수 제한 검사
-    if (eocd.cdEntriesTotal > config.validation.webglMaxFileCount) {
-      return {
-        valid: false,
-        error: `zip 내 파일 수가 제한을 초과합니다. (${eocd.cdEntriesTotal}개 / 최대 ${config.validation.webglMaxFileCount}개)`,
-        errorCode: 'TOO_MANY_FILES',
-        files: [],
-        totalUncompressedSize: 0,
-        fileCount: eocd.cdEntriesTotal,
-      };
-    }
-    
-    // 3. Central Directory 읽기
+    // 2. Central Directory 읽기
     const cdObject = await bucket.get(key, {
       range: { offset: eocd.cdOffset, length: eocd.cdSize },
     });
@@ -273,6 +276,19 @@ export async function validateWebGLZipFromR2(
     const cdBuffer = await cdObject.arrayBuffer();
     const entries = parseCentralDirectory(cdBuffer, eocd.cdEntriesTotal);
     
+    // 3. 파일 수 제한 검사 (디렉터리 제외 - PRD 8.2)
+    const fileOnlyCount = entries.filter(e => !e.isDirectory).length;
+    if (fileOnlyCount > config.validation.webglMaxFileCount) {
+      return {
+        valid: false,
+        error: `zip 내 파일 수가 제한을 초과합니다. (${fileOnlyCount}개 / 최대 ${config.validation.webglMaxFileCount}개)`,
+        errorCode: 'TOO_MANY_FILES',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: fileOnlyCount,
+      };
+    }
+    
     // 4. 파일 목록 및 크기 계산
     let totalUncompressedSize = 0;
     let indexHtmlPath: string | undefined;
@@ -281,6 +297,18 @@ export async function validateWebGLZipFromR2(
     
     for (const entry of entries) {
       if (entry.isDirectory) continue;
+      
+      // TC-F4-33: Path traversal check
+      if (!isPathSafe(entry.fileName)) {
+        return {
+          valid: false,
+          error: '안전하지 않은 파일 경로가 포함되어 있습니다. (경로 조작 시도 감지)',
+          errorCode: 'UNSAFE_PATH',
+          files: [],
+          totalUncompressedSize: 0,
+          fileCount: 0,
+        };
+      }
       
       totalUncompressedSize += entry.uncompressedSize;
       
@@ -419,21 +447,22 @@ export async function validateWebGLZip(
       };
     }
     
-    // 파일 수 제한
-    if (eocd.cdEntriesTotal > maxFiles) {
-      return {
-        valid: false,
-        error: `zip 내 파일 수가 제한을 초과합니다. (${eocd.cdEntriesTotal}개 / 최대 ${maxFiles}개)`,
-        errorCode: 'TOO_MANY_FILES',
-        files: [],
-        totalUncompressedSize: 0,
-        fileCount: eocd.cdEntriesTotal,
-      };
-    }
-    
     // Central Directory 파싱
     const cdBuffer = zipBuffer.slice(eocd.cdOffset, eocd.cdOffset + eocd.cdSize);
     const entries = parseCentralDirectory(cdBuffer, eocd.cdEntriesTotal);
+    
+    // 파일 수 제한 검사 (디렉터리 제외 - PRD 8.2)
+    const fileOnlyCount = entries.filter(e => !e.isDirectory).length;
+    if (fileOnlyCount > maxFiles) {
+      return {
+        valid: false,
+        error: `zip 내 파일 수가 제한을 초과합니다. (${fileOnlyCount}개 / 최대 ${maxFiles}개)`,
+        errorCode: 'TOO_MANY_FILES',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: fileOnlyCount,
+      };
+    }
     
     let totalUncompressedSize = 0;
     let indexHtmlPath: string | undefined;
@@ -442,6 +471,18 @@ export async function validateWebGLZip(
     
     for (const entry of entries) {
       if (entry.isDirectory) continue;
+      
+      // TC-F4-33: Path traversal check
+      if (!isPathSafe(entry.fileName)) {
+        return {
+          valid: false,
+          error: '안전하지 않은 파일 경로가 포함되어 있습니다. (경로 조작 시도 감지)',
+          errorCode: 'UNSAFE_PATH',
+          files: [],
+          totalUncompressedSize: 0,
+          fileCount: 0,
+        };
+      }
       
       totalUncompressedSize += entry.uncompressedSize;
       

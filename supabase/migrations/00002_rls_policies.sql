@@ -531,3 +531,30 @@ CREATE POLICY "audit_logs_select" ON audit_logs
 CREATE POLICY "audit_logs_insert" ON audit_logs
   FOR INSERT TO authenticated
   WITH CHECK (is_admin());
+
+-- ----------------------------------------------------------------------------
+-- 보안 트리거: 민감한 컬럼 보호
+-- ----------------------------------------------------------------------------
+
+-- 일반 사용자는 자신의 global_role과 status를 변경할 수 없음
+-- 운영진만 이 필드들을 변경 가능
+CREATE OR REPLACE FUNCTION protect_sensitive_profile_columns()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- 운영진이 아니면서 global_role 또는 status를 변경하려는 경우 차단
+  IF NOT is_admin() THEN
+    IF OLD.global_role IS DISTINCT FROM NEW.global_role THEN
+      RAISE EXCEPTION 'Cannot change global_role without admin privileges';
+    END IF;
+    IF OLD.status IS DISTINCT FROM NEW.status THEN
+      RAISE EXCEPTION 'Cannot change status without admin privileges';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER protect_profile_sensitive_columns
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION protect_sensitive_profile_columns();
