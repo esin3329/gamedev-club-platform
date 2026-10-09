@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await request.json() as UploadRequest | WebGLFileRequest;
     const isWebGLFile = 'relativePath' in body;
 
     if (isWebGLFile) {

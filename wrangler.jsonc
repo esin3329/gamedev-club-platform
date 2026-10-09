@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gamedev-club-platform",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // R2 버킷 바인딩 (환경변수 대신 직접 바인딩)
+  "r2_buckets": [
+    {
+      "binding": "R2_BUILDS",
+      "bucket_name": "gamedev-builds"
+    }
+  ],
+
+  // KV 네임스페이스 (세션/캐시용, 필요시)
+  "kv_namespaces": [
+    {
+      "binding": "KV_CACHE",
+      "id": "placeholder-kv-id"
+    }
+  ],
+
+  // 환경변수 (민감하지 않은 것만, 민감 정보는 Cloudflare Dashboard에서 설정)
+  "vars": {
+    "ENVIRONMENT": "production"
+  },
+
+  // 스케줄 트리거 (cron jobs)
+  "triggers": {
+    "crons": [
+      "0 */6 * * *",  // 6시간마다: 보관 정책 cleanup
+      "0 0 * * *"     // 매일 자정: Supabase keep-alive ping
+    ]
+  },
+
+  // 개발 환경 설정
+  "dev": {
+    "port": 8788,
+    "local_protocol": "http"
+  }
+}
