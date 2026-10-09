@@ -358,17 +358,66 @@ async function handleWebGLComplete(
     );
   }
 
-  // Fetch server-stored validation (not from client)
-  const { data: pendingValidation, error: fetchError } = await supabase
+  // Atomically claim the validation record (single-use, TC-F4-46 replay prevention)
+  // UPDATE with status='pending' filter ensures only one request can claim it
+  const { data: claimedValidation, error: claimError } = await supabase
     .from('pending_validations')
-    .select('*')
+    .update({ status: 'processing' })
     .eq('build_id', buildId)
     .eq('project_id', projectId)
     .eq('user_id', userId)
     .eq('status', 'pending')
+    .select('*')
     .single();
 
-  if (fetchError || !pendingValidation) {
+  if (claimError || !claimedValidation) {
+    // Check if validation exists but was already used
+    const { data: existingValidation } = await supabase
+      .from('pending_validations')
+      .select('status')
+      .eq('build_id', buildId)
+      .eq('project_id', projectId)
+      .single();
+
+    if (existingValidation) {
+      if (existingValidation.status === 'completed') {
+        return NextResponse.json(
+          { 
+            error: '이 검증은 이미 완료되었습니다. 빌드가 이미 등록되었습니다.',
+            errorCode: 'VALIDATION_ALREADY_USED',
+          },
+          { status: 409 }
+        );
+      }
+      if (existingValidation.status === 'processing') {
+        return NextResponse.json(
+          { 
+            error: '이 검증이 현재 처리 중입니다. 잠시 후 다시 시도해주세요.',
+            errorCode: 'VALIDATION_IN_PROGRESS',
+          },
+          { status: 409 }
+        );
+      }
+      if (existingValidation.status === 'expired') {
+        return NextResponse.json(
+          { 
+            error: '검증이 만료되었습니다. 다시 업로드해주세요.',
+            errorCode: 'VALIDATION_EXPIRED',
+          },
+          { status: 400 }
+        );
+      }
+      if (existingValidation.status === 'failed') {
+        return NextResponse.json(
+          { 
+            error: '이전 등록 시도가 실패했습니다. 다시 업로드해주세요.',
+            errorCode: 'VALIDATION_FAILED',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     return NextResponse.json(
       { 
         error: '유효한 검증 기록이 없습니다. validate를 먼저 호출해주세요.',
@@ -378,7 +427,10 @@ async function handleWebGLComplete(
     );
   }
 
-  // Check if validation has expired
+  // Alias for clarity in rest of function
+  const pendingValidation = claimedValidation;
+
+  // Check if validation has expired (even after claiming)
   if (new Date(pendingValidation.expires_at) < new Date()) {
     // Mark as expired
     await supabase

@@ -239,7 +239,7 @@ describe('formatBytes', () => {
   });
 });
 
-describe('TC-F4-42: Cleanup configuration', () => {
+describe('TC-F4-42: Cleanup configuration (BUILD_TEMP_MAX_AGE_HOURS)', () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
   });
@@ -248,22 +248,22 @@ describe('TC-F4-42: Cleanup configuration', () => {
     vi.unstubAllEnvs();
   });
 
-  it('방치된 업로드 만료 시간 기본값 24시간', () => {
+  it('TC-F4-42: BUILD_TEMP_MAX_AGE_HOURS 기본값 24시간', () => {
     const config = getBuildStorageConfig();
-    expect(config.cleanup.orphanedUploadMaxAgeMs).toBe(24 * 60 * 60 * 1000);
+    expect(config.cleanup.tempMaxAgeMs).toBe(24 * 60 * 60 * 1000);
   });
 
-  it('검증 만료 시간 기본값 24시간', () => {
-    const config = getBuildStorageConfig();
-    expect(config.cleanup.validationExpiryMs).toBe(24 * 60 * 60 * 1000);
-  });
-
-  it('환경 변수로 오버라이드 가능', () => {
-    vi.stubEnv('CLEANUP_ORPHANED_UPLOAD_MAX_AGE_HOURS', '48');
-    vi.stubEnv('CLEANUP_VALIDATION_EXPIRY_HOURS', '12');
+  it('TC-F4-42: BUILD_TEMP_MAX_AGE_HOURS 환경 변수로 오버라이드 가능', () => {
+    vi.stubEnv('BUILD_TEMP_MAX_AGE_HOURS', '48');
     
     const config = getBuildStorageConfig();
-    expect(config.cleanup.orphanedUploadMaxAgeMs).toBe(48 * 60 * 60 * 1000);
-    expect(config.cleanup.validationExpiryMs).toBe(12 * 60 * 60 * 1000);
+    expect(config.cleanup.tempMaxAgeMs).toBe(48 * 60 * 60 * 1000);
+  });
+
+  it('TC-F4-42: BUILD_TEMP_MAX_AGE_HOURS=12 설정 시 12시간으로 변경', () => {
+    vi.stubEnv('BUILD_TEMP_MAX_AGE_HOURS', '12');
+    
+    const config = getBuildStorageConfig();
+    expect(config.cleanup.tempMaxAgeMs).toBe(12 * 60 * 60 * 1000);
   });
 });

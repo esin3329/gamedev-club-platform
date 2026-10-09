@@ -8,10 +8,10 @@ This document maps P0 test scenario IDs from `test-scenarios-v1.1.md` to their a
 |----------|-----------|------------------------|--------|
 | Upload/Storage Config | 41 | 0 | 0 |
 | WebGL Validation | 50 | 0 | 0 |
-| WebGL Two-Phase Security | 15 | 0 | 0 |
+| WebGL Two-Phase Security | 21 | 0 | 0 |
 | Retention Logic | 19 | 0 | 0 |
 | RLS Policies | 10 | 0 | 0 |
-| **Total** | **135** | See below | See below |
+| **Total** | **141** | See below | See below |
 
 ## Running Tests
 
@@ -41,29 +41,35 @@ npm run test:all
 | TC-F4-35 | Upload presigned URL expiry = 3600s | ✅ Automated |
 | TC-F4-35 | Download presigned URL expiry = 300s | ✅ Automated |
 | TC-F4-35 | Environment variable override for expiry times | ✅ Automated |
-| TC-F4-42 | Cleanup orphaned upload max age default 24h | ✅ Automated |
-| TC-F4-42 | Validation expiry default 24h | ✅ Automated |
-| TC-F4-42 | Cleanup config environment variable override | ✅ Automated |
+| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS default 24h | ✅ Automated |
+| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS env var override | ✅ Automated |
+| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS=12 sets 12h | ✅ Automated |
 
 ### WebGL Two-Phase Upload Security Tests (`route.test.ts`)
 
 | TC-ID | Description | Status |
 |-------|-------------|--------|
-| TC-F4-39 | ExpectedFiles stored server-side (not from client) | ✅ Automated |
-| TC-F4-39 | Complete requires pending validation record | ✅ Automated |
-| TC-F4-39 | Expired validation rejected | ✅ Automated |
-| TC-F4-40 | Storage key derived server-side from projectId/buildId | ✅ Automated |
-| TC-F4-40 | Malicious storage key prefix rejected | ✅ Automated |
-| TC-F4-40 | Valid storage key prefix accepted | ✅ Automated |
-| TC-F4-41 | Uploaded file sizes compared against validated sizes | ✅ Automated |
-| TC-F4-41 | File size mismatch beyond tolerance detected | ✅ Automated |
-| TC-F4-41 | Total size cap enforced on actual uploaded bytes | ✅ Automated |
-| TC-F4-41 | R2 sizes used (not client-reported) | ✅ Automated |
-| TC-F4-42 | Expired pending validations identified | ✅ Automated |
-| TC-F4-42 | Temp zip cleaned up on abandoned flow | ✅ Automated |
-| TC-F4-42 | Orphaned temp zips older than 24h identified | ✅ Automated |
-| TC-F4-40 | PC build wrong storage key prefix rejected | ✅ Automated |
-| TC-F4-40 | PC build correct storage key prefix accepted | ✅ Automated |
+| TC-F4-39a | ExpectedFiles stored in pending_validations table | ✅ Automated |
+| TC-F4-39b | Complete rejected without pending validation | ✅ Automated |
+| TC-F4-39c | Expired validation rejected | ✅ Automated |
+| TC-F4-40a | Storage key derived server-side from projectId/buildId | ✅ Automated |
+| TC-F4-40b | Malicious storage key prefix rejected | ✅ Automated |
+| TC-F4-40c | Valid storage key prefix accepted | ✅ Automated |
+| TC-F4-40d | PC build wrong storage key prefix rejected | ✅ Automated |
+| TC-F4-40e | PC build correct storage key prefix accepted | ✅ Automated |
+| TC-F4-41a | Uploaded file sizes compared against validated sizes | ✅ Automated |
+| TC-F4-41b | File size mismatch beyond tolerance detected | ✅ Automated |
+| TC-F4-41c | Total size cap enforced on actual uploaded bytes | ✅ Automated |
+| TC-F4-41d | R2 sizes used (not client-reported) | ✅ Automated |
+| TC-F4-42a | Expired pending validations identified | ✅ Automated |
+| TC-F4-42b | Temp zip cleaned up on abandoned flow | ✅ Automated |
+| TC-F4-42c | Orphaned temp zips older than BUILD_TEMP_MAX_AGE_HOURS | ✅ Automated |
+| TC-F4-46a | Validation status transitions pending -> processing | ✅ Automated |
+| TC-F4-46b | Second complete rejected (VALIDATION_ALREADY_USED) | ✅ Automated |
+| TC-F4-46c | Concurrent complete rejected (VALIDATION_IN_PROGRESS) | ✅ Automated |
+| TC-F4-46d | Expired validation cannot be replayed | ✅ Automated |
+| TC-F4-46e | Failed validation cannot be replayed | ✅ Automated |
+| TC-F4-46f | Valid status transitions for single-use pattern | ✅ Automated |
 
 ### WebGL Validation Tests (`webgl-validator.test.ts`)
 

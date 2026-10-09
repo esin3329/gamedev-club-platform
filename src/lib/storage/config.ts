@@ -50,10 +50,11 @@ export interface BuildStorageConfig {
     downloadExpirySeconds: number;
   };
   cleanup: {
-    /** 방치된 업로드 만료 시간 (ms). 기본값: 24시간 */
-    orphanedUploadMaxAgeMs: number;
-    /** 검증 만료 시간 (ms). 기본값: 24시간 */
-    validationExpiryMs: number;
+    /** 
+     * 임시 업로드 및 검증 만료 시간 (ms). 기본값: 24시간
+     * BUILD_TEMP_MAX_AGE_HOURS 환경 변수로 설정 (PRD 명칭)
+     */
+    tempMaxAgeMs: number;
   };
   allowedExtensions: {
     buildArchive: string[];
@@ -143,14 +144,10 @@ export function getBuildStorageConfig(): BuildStorageConfig {
     },
 
     cleanup: {
-      // CLEANUP_ORPHANED_UPLOAD_MAX_AGE_HOURS: 방치된 업로드 만료 시간
-      orphanedUploadMaxAgeMs: parseEnvInt(
-        process.env.CLEANUP_ORPHANED_UPLOAD_MAX_AGE_HOURS,
-        24  // 기본값: 24시간
-      ) * 60 * 60 * 1000,
-      // CLEANUP_VALIDATION_EXPIRY_HOURS: 검증 만료 시간
-      validationExpiryMs: parseEnvInt(
-        process.env.CLEANUP_VALIDATION_EXPIRY_HOURS,
+      // BUILD_TEMP_MAX_AGE_HOURS: 임시 업로드 및 검증 만료 시간 (PRD 명칭)
+      // 방치된 업로드와 검증 레코드 모두에 적용
+      tempMaxAgeMs: parseEnvInt(
+        process.env.BUILD_TEMP_MAX_AGE_HOURS,
         24  // 기본값: 24시간
       ) * 60 * 60 * 1000,
     },

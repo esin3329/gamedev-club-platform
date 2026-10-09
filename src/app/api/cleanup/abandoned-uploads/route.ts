@@ -177,7 +177,7 @@ export async function cleanupAbandonedUploads(): Promise<CleanupResult> {
 }
 
 /**
- * Clean up temp zips older than 24 hours that don't have pending_validations records
+ * Clean up temp zips older than BUILD_TEMP_MAX_AGE_HOURS that don't have pending_validations records
  */
 async function cleanupOrphanedTempZips(
   storage: ReturnType<typeof getStorageClient>,
@@ -186,7 +186,7 @@ async function cleanupOrphanedTempZips(
 ): Promise<void> {
   const supabase = await createClient();
   const config = getBuildStorageConfig();
-  const maxAge = config.cleanup?.orphanedUploadMaxAgeMs || 24 * 60 * 60 * 1000; // Default 24h
+  const maxAge = config.cleanup.tempMaxAgeMs;
   const cutoff = new Date(Date.now() - maxAge);
 
   const prefix = 'uploads/';

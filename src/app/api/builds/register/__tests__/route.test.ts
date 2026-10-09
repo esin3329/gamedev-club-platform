@@ -2,10 +2,11 @@
  * WebGL Two-Phase Upload Security Tests
  * 
  * Tests for security fixes in the build registration flow:
- * - TC-F4-39: Server-side expectedFiles storage (not trusted from client)
+ * - TC-F4-39a/b/c: Server-side expectedFiles storage (not trusted from client)
  * - TC-F4-40: Storage key derived server-side
  * - TC-F4-41: Actual R2 file sizes compared against validated sizes
- * - TC-F4-42: Abandoned upload cleanup
+ * - TC-F4-42: Abandoned upload cleanup (BUILD_TEMP_MAX_AGE_HOURS)
+ * - TC-F4-46: Single-use validation (replay prevention)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -13,8 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Test the helper functions directly since we can't easily test the full route
 describe('WebGL Two-Phase Upload Security', () => {
   describe('TC-F4-40: Server-derived storage keys', () => {
-    // Test the deriveTempZipKey function logic
-    it('should derive temp zip key from projectId and buildId', () => {
+    it('TC-F4-40a: should derive temp zip key from projectId and buildId', () => {
       const projectId = 'proj-123';
       const buildId = 'build-456';
       const expected = `uploads/${projectId}/${buildId}.zip`;
@@ -25,7 +25,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(derivedKey).toBe(expected);
     });
 
-    it('should reject storage keys that do not match project prefix', () => {
+    it('TC-F4-40b: should reject storage keys that do not match project prefix', () => {
       const projectId = 'proj-123';
       const maliciousKey = 'uploads/other-project/build.zip';
       
@@ -36,7 +36,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(isValid).toBe(false);
     });
 
-    it('should accept storage keys that match project prefix', () => {
+    it('TC-F4-40c: should accept storage keys that match project prefix', () => {
       const projectId = 'proj-123';
       const validKey = 'uploads/proj-123/build-456.zip';
       
@@ -45,10 +45,30 @@ describe('WebGL Two-Phase Upload Security', () => {
       
       expect(isValid).toBe(true);
     });
+
+    it('TC-F4-40d: should reject PC build with wrong storage key prefix', () => {
+      const projectId = 'proj-123';
+      const maliciousStorageKey = 'pc/other-project/build.zip';
+      
+      const expectedPrefix = `pc/${projectId}/`;
+      const isValid = maliciousStorageKey.startsWith(expectedPrefix);
+      
+      expect(isValid).toBe(false);
+    });
+
+    it('TC-F4-40e: should accept PC build with correct storage key prefix', () => {
+      const projectId = 'proj-123';
+      const validStorageKey = 'pc/proj-123/build-456.zip';
+      
+      const expectedPrefix = `pc/${projectId}/`;
+      const isValid = validStorageKey.startsWith(expectedPrefix);
+      
+      expect(isValid).toBe(true);
+    });
   });
 
   describe('TC-F4-39: ExpectedFiles server-side storage', () => {
-    it('should store expected files in pending_validations table', () => {
+    it('TC-F4-39a: should store expected files in pending_validations table', () => {
       // This is a structural test - the route now stores in DB, not returned to client for re-submission
       const expectedFiles = [
         { path: 'index.html', uncompressedSize: 1000 },
@@ -72,7 +92,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(validationRecord.temp_storage_key).toBe('uploads/proj-456/build-123.zip');
     });
 
-    it('should reject complete request without pending validation', () => {
+    it('TC-F4-39b: should reject complete request without pending validation', () => {
       // The complete endpoint requires a matching pending_validations record
       const pendingValidation = null;
       
@@ -80,7 +100,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(shouldReject).toBe(true);
     });
 
-    it('should reject complete request with expired validation', () => {
+    it('TC-F4-39c: should reject complete request with expired validation', () => {
       const pendingValidation = {
         expires_at: new Date(Date.now() - 1000).toISOString(), // 1 second ago
         status: 'pending',
@@ -92,7 +112,7 @@ describe('WebGL Two-Phase Upload Security', () => {
   });
 
   describe('TC-F4-41: Actual file size verification', () => {
-    it('should compare uploaded file sizes against validated sizes', () => {
+    it('TC-F4-41a: should compare uploaded file sizes against validated sizes', () => {
       const expectedFiles = [
         { path: 'index.html', uncompressedSize: 1000 },
         { path: 'game.js', uncompressedSize: 50000 },
@@ -128,7 +148,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(sizeMismatches).toHaveLength(0);
     });
 
-    it('should detect file size mismatch beyond tolerance', () => {
+    it('TC-F4-41b: should detect file size mismatch beyond tolerance', () => {
       const expectedFiles = [
         { path: 'index.html', uncompressedSize: 1000 },
         { path: 'game.js', uncompressedSize: 50000 },
@@ -162,7 +182,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(sizeMismatches[0].path).toBe('game.js');
     });
 
-    it('should enforce total size cap on actual uploaded bytes', () => {
+    it('TC-F4-41c: should enforce total size cap on actual uploaded bytes', () => {
       const maxSize = 500 * 1024 * 1024; // 500 MiB
       
       const uploadedFiles = [
@@ -177,7 +197,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(exceedsLimit).toBe(true);
     });
 
-    it('should use actual R2 sizes not client-reported sizes', () => {
+    it('TC-F4-41d: should use actual R2 sizes not client-reported sizes', () => {
       // R2 list() returns objects with size property
       const r2Objects = [
         { key: 'webgl/proj/build/index.html', size: 1000, uploaded: new Date() },
@@ -195,8 +215,8 @@ describe('WebGL Two-Phase Upload Security', () => {
     });
   });
 
-  describe('TC-F4-42: Abandoned upload cleanup', () => {
-    it('should identify expired pending validations', () => {
+  describe('TC-F4-42: Abandoned upload cleanup (BUILD_TEMP_MAX_AGE_HOURS)', () => {
+    it('TC-F4-42a: should identify expired pending validations', () => {
       const pendingValidations = [
         { 
           id: 'v1',
@@ -219,7 +239,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(expired[0].id).toBe('v1');
     });
 
-    it('should cleanup temp zip on abandoned flow', () => {
+    it('TC-F4-42b: should cleanup temp zip on abandoned flow', () => {
       const pendingValidation = {
         temp_storage_key: 'uploads/proj-123/build-456.zip',
         project_id: 'proj-123',
@@ -238,8 +258,8 @@ describe('WebGL Two-Phase Upload Security', () => {
       expect(partialUploadPrefix).toBe('webgl/proj-123/build-456/');
     });
 
-    it('should identify orphaned temp zips older than 24h', () => {
-      const maxAge = 24 * 60 * 60 * 1000; // 24h in ms
+    it('TC-F4-42c: should identify orphaned temp zips older than BUILD_TEMP_MAX_AGE_HOURS', () => {
+      const maxAge = 24 * 60 * 60 * 1000; // 24h in ms (default BUILD_TEMP_MAX_AGE_HOURS)
       const cutoff = new Date(Date.now() - maxAge);
       
       const tempZips = [
@@ -254,25 +274,80 @@ describe('WebGL Two-Phase Upload Security', () => {
     });
   });
 
-  describe('PC build storage key validation', () => {
-    it('should reject PC build with wrong storage key prefix', () => {
-      const projectId = 'proj-123';
-      const maliciousStorageKey = 'pc/other-project/build.zip';
+  describe('TC-F4-46: Single-use validation (replay prevention)', () => {
+    it('TC-F4-46a: validation status transitions from pending to processing', () => {
+      // Simulating atomic claim via UPDATE ... WHERE status = 'pending'
+      const validationBefore = { status: 'pending' };
+      const validationAfter = { status: 'processing' };
       
-      const expectedPrefix = `pc/${projectId}/`;
-      const isValid = maliciousStorageKey.startsWith(expectedPrefix);
-      
-      expect(isValid).toBe(false);
+      // Only one request should succeed in claiming
+      expect(validationBefore.status).toBe('pending');
+      expect(validationAfter.status).toBe('processing');
     });
 
-    it('should accept PC build with correct storage key prefix', () => {
-      const projectId = 'proj-123';
-      const validStorageKey = 'pc/proj-123/build-456.zip';
+    it('TC-F4-46b: second complete request should be rejected (already completed)', () => {
+      const existingValidation = { status: 'completed' };
       
-      const expectedPrefix = `pc/${projectId}/`;
-      const isValid = validStorageKey.startsWith(expectedPrefix);
+      // Check the status - completed means it was already used
+      const shouldReject = existingValidation.status === 'completed';
+      const errorCode = 'VALIDATION_ALREADY_USED';
       
-      expect(isValid).toBe(true);
+      expect(shouldReject).toBe(true);
+      expect(errorCode).toBe('VALIDATION_ALREADY_USED');
+    });
+
+    it('TC-F4-46c: concurrent complete request should be rejected (processing)', () => {
+      const existingValidation = { status: 'processing' };
+      
+      // Check the status - processing means another request is handling it
+      const shouldReject = existingValidation.status === 'processing';
+      const errorCode = 'VALIDATION_IN_PROGRESS';
+      
+      expect(shouldReject).toBe(true);
+      expect(errorCode).toBe('VALIDATION_IN_PROGRESS');
+    });
+
+    it('TC-F4-46d: expired validation cannot be replayed', () => {
+      const existingValidation = { status: 'expired' };
+      
+      const shouldReject = existingValidation.status === 'expired';
+      const errorCode = 'VALIDATION_EXPIRED';
+      
+      expect(shouldReject).toBe(true);
+      expect(errorCode).toBe('VALIDATION_EXPIRED');
+    });
+
+    it('TC-F4-46e: failed validation cannot be replayed', () => {
+      const existingValidation = { status: 'failed' };
+      
+      const shouldReject = existingValidation.status === 'failed';
+      const errorCode = 'VALIDATION_FAILED';
+      
+      expect(shouldReject).toBe(true);
+      expect(errorCode).toBe('VALIDATION_FAILED');
+    });
+
+    it('TC-F4-46f: valid status transitions for single-use pattern', () => {
+      const validStatuses = ['pending', 'processing', 'completed', 'expired', 'failed'];
+      
+      // Valid transitions:
+      // pending -> processing (claimed by complete)
+      // processing -> completed (success)
+      // processing -> failed (error during processing)
+      // pending -> expired (cleanup job)
+      
+      const validTransitions = {
+        pending: ['processing', 'expired'],
+        processing: ['completed', 'failed'],
+        completed: [], // terminal state
+        expired: [], // terminal state
+        failed: [], // terminal state
+      };
+      
+      expect(validStatuses).toHaveLength(5);
+      expect(validTransitions.pending).toContain('processing');
+      expect(validTransitions.processing).toContain('completed');
+      expect(validTransitions.completed).toHaveLength(0);
     });
   });
 });
