@@ -315,11 +315,40 @@ npm run build:cloudflare
 | 일일 요청 | 100,000 | 대부분 충분 |
 | CPU 시간/요청 | 10ms | zip 전체 압축 해제 불가 |
 | 메모리 | 128MB | 큰 파일 메모리 로드 불가 |
-| 스크립트 크기 | 10MB (압축 후 1MB) | OpenNext 빌드 크기 주의 |
+| 스크립트 크기 (비압축) | 64 MiB | 현재 ~8.7 MiB (86% 여유) |
 
 **CPU 제한 대응:**
 - WebGL zip 검증: R2 ranged reads로 central directory만 읽음
 - WebGL zip 추출: 클라이언트에서 수행 후 개별 파일 업로드
+
+### Worker 번들 크기 측정
+
+현재 프로젝트 번들 크기 (2026-10-09 기준):
+
+```
+Total Upload: 8,920 KiB (8.71 MiB) / gzip: 1,802 KiB (1.76 MiB)
+Limit: 64 MiB (비압축 기준, 압축 크기 제한 없음)
+사용률: 13.6% | 여유: 86.4% (55.3 MiB)
+```
+
+번들 크기 측정 명령:
+
+```bash
+# OpenNext 빌드 후 wrangler dry-run
+npm run build:cloudflare
+cd .open-next && npx wrangler deploy worker.js --dry-run --outdir ../wrangler-dry-run
+```
+
+**주요 번들 구성:**
+- Next.js 서버 런타임 (handler.mjs): ~5.4 MiB
+- Next.js/React 코어: 번들 대부분 차지
+- AWS SDK (R2용): ~1 MiB - Workers 환경에서는 R2 바인딩 사용으로 최소화
+- JSZip: 클라이언트 전용 (서버 번들에 포함 안 됨)
+
+**번들 크기 최적화 팁:**
+- 불필요한 서버 사이드 패키지 제거
+- 대용량 정적 자산은 R2/KV에 저장
+- 서비스 바인딩으로 기능 분리 가능
 
 ### Cloudflare R2 Free
 
