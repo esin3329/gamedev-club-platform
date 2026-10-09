@@ -250,6 +250,10 @@ END $$;
 -- TC-RLS-04b: Mixed update with allowed fields + role/status rejected
 -- Member updates name (allowed) + global_role (forbidden) in same statement
 -- The sensitive field change must be rejected while not escalating
+-- 
+-- NOTE: Tested at DB level (direct UPDATE on profiles table) since there is
+-- no profile edit screen in MVP. This covers the apply/registration flow
+-- where a user might try to tamper with the request payload.
 -- ============================================================================
 DO $$
 DECLARE
@@ -292,6 +296,7 @@ END $$;
 
 -- ============================================================================
 -- TC-RLS-04b-2: Pending user mixed update (name + status) rejected
+-- NOTE: Tested at DB level - covers tampered API requests to self-approve
 -- ============================================================================
 DO $$
 DECLARE

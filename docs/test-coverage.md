@@ -7,11 +7,12 @@ This document maps P0 test scenario IDs from `test-scenarios-v1.1.md` to their a
 | Category | Automated | Needs External Accounts | Manual |
 |----------|-----------|------------------------|--------|
 | Upload/Storage Config | 41 | 0 | 0 |
-| WebGL Validation | 50 | 0 | 0 |
+| WebGL Validation | 51 | 0 | 0 |
 | WebGL Two-Phase Security | 26 | 0 | 0 |
 | Retention Logic | 19 | 0 | 0 |
 | RLS Policies | 13 | 0 | 0 |
-| **Total** | **149** | See below | See below |
+| Environment Security | 8 | 0 | 0 |
+| **Total** | **158** | See below | See below |
 
 ## Running Tests
 
@@ -95,7 +96,7 @@ Per test-scenarios-v1.1.md TC ID mapping:
 | TC-F4-17 | Absolute path in zip rejected | ✅ Automated |
 | TC-F4-18 | EOCD not found rejected | ✅ Automated |
 | TC-F4-19 | CD entry parse error rejected | ✅ Automated |
-| TC-F4-20 | Directory-only entries excluded from file count | ✅ Automated |
+| TC-F4-29b | Directory entries excluded from file count | ✅ Automated |
 
 ### Retention Logic Tests (`retention.test.ts`)
 
@@ -129,6 +130,19 @@ Per test-scenarios-v1.1.md TC ID mapping:
 | TC-RLS-07 | Admin can update projects (documented behavior) | ✅ Automated |
 | TC-F5-02 | Same user same build has only one rating (unique constraint) | ✅ Automated |
 | TC-F5-03 | Team member cannot rate own project build | ✅ Automated |
+
+### Environment Security Tests (`scripts/__tests__/scan-secrets.test.ts`)
+
+| TC-ID | Description | Status |
+|-------|-------------|--------|
+| TC-ENV-10a | AWS access key pattern detected | ✅ Automated |
+| TC-ENV-10b | Supabase service role key (JWT) pattern detected | ✅ Automated |
+| TC-ENV-10c | Discord webhook URL pattern detected | ✅ Automated |
+| TC-ENV-10d | scan-secrets.sh script exists and executable | ✅ Automated |
+| TC-ENV-10e | .gitignore blocks .env files | ✅ Automated |
+| TC-ENV-10f | .gitignore blocks .dev.vars (wrangler secrets) | ✅ Automated |
+| TC-ENV-10g | gitleaks full history scan passes | ✅ Automated |
+| TC-ENV-10h | gitleaks blocks staged fake secret | ✅ Automated |
 
 ## Needs External Accounts
 

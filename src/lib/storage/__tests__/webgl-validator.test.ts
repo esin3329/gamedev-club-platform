@@ -252,6 +252,27 @@ describe('validateWebGLZip - Size and count limits', () => {
       const config = getBuildStorageConfig();
       expect(config.validation.webglMaxFileCount).toBe(1000);
     });
+
+    it('TC-F4-29b: 디렉터리 엔트리는 파일 수에서 제외', async () => {
+      // Create zip with directories that would exceed limit if counted
+      // 3 directories + 3 files = 6 total entries, but only 3 files
+      const files: Record<string, string> = {
+        'index.html': '<html></html>',
+        'Build/': '', // directory entry
+        'Build/game.js': 'console.log("game")',
+        'Build/data/': '', // nested directory entry
+        'Build/data/level.json': '{}',
+        'StreamingAssets/': '', // another directory
+      };
+      const zipBuffer = await createTestZip(files);
+      
+      // Use a limit of 4 files - if directories were counted, this would fail
+      const result = await validateWebGLZip(zipBuffer, undefined, 4);
+      
+      expect(result.valid).toBe(true);
+      // File count should be 3 (excluding directory entries)
+      expect(result.fileCount).toBe(3);
+    });
   });
 });
 
