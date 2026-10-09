@@ -2,33 +2,35 @@
 
 이 문서는 게임 개발 동아리 플랫폼을 프로덕션 환경에 배포하는 단계별 가이드입니다.
 
+GitHub 저장소: https://github.com/esin3329/gamedev-club-platform
+
 ## 아키텍처 개요
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│                 │     │                  │     │                 │
-│  GitHub Repo    │────▶│ Cloudflare Pages │────▶│  Supabase       │
-│  (esin3329/*)   │     │ (Next.js App)    │     │  (PostgreSQL)   │
-│                 │     │                  │     │                 │
-└─────────────────┘     └────────┬─────────┘     └─────────────────┘
-                                 │
-                        ┌────────▼─────────┐
-                        │                  │
-                        │  Cloudflare R2   │
-                        │  (빌드 파일)     │
-                        │                  │
-                        └──────────────────┘
+┌─────────────────┐     ┌───────────────────┐     ┌─────────────────┐
+│                 │     │                   │     │                 │
+│  GitHub Repo    │────▶│ Cloudflare Workers│────▶│  Supabase       │
+│  esin3329/      │     │ (OpenNext)        │     │  (PostgreSQL)   │
+│  gamedev-club-  │     │                   │     │                 │
+│  platform       │     │                   │     │                 │
+└─────────────────┘     └─────────┬─────────┘     └─────────────────┘
+                                  │
+                         ┌────────▼─────────┐
+                         │                  │
+                         │  Cloudflare R2   │
+                         │  (빌드 파일)     │
+                         │                  │
+                         └──────────────────┘
 ```
 
 모든 서비스는 **무료 티어**로 운영 가능합니다.
 
 | 서비스 | 무료 한도 | 용도 |
 |--------|----------|------|
-| Cloudflare Pages | 무제한 요청, 500 빌드/월 | 웹 호스팅 |
-| Cloudflare Workers | 100,000 요청/일 | Cron 작업 |
+| Cloudflare Workers | 100,000 요청/일, 10ms CPU/요청 | 웹 호스팅 (OpenNext) |
 | Cloudflare R2 | 10GB 저장, 10M 요청/월 | 빌드 파일 |
-| Supabase | 500MB DB, 1GB 대역폭 | 데이터베이스 |
-| GitHub | 무제한 공개 저장소 | 소스 코드 |
+| Supabase Free | 500MB DB, 1GB 대역폭 | 데이터베이스 |
+| GitHub | 무제한 비공개 저장소 | 소스 코드 |
 
 ---
 
@@ -143,7 +145,7 @@ R2 버킷에 공개 도메인을 연결해야 WebGL 빌드를 서빙할 수 있�
 
 ### 3.4 R2 API 토큰 생성 (로컬 개발용)
 
-로컬 개발 시에만 필요합니다. Pages 배포 시에는 바인딩을 사용합니다.
+로컬 개발 시에만 필요합니다. Workers 배포 시에는 바인딩을 사용합니다.
 
 1. **R2 > Overview > Manage R2 API Tokens**
 2. **Create API token**
@@ -153,41 +155,17 @@ R2 버킷에 공개 도메인을 연결해야 WebGL 빌드를 서빙할 수 있�
 
 ---
 
-## 4단계: GitHub 저장소 설정
+## 4단계: Cloudflare Workers 배포 (GitHub 연동)
 
-### 4.1 저장소 생성
-
-1. [GitHub](https://github.com/new) 새 저장소 생성
-2. 저장소 이름 입력 (예: `gamedev-club-platform`)
-3. **Private** 또는 **Public** 선택
-4. **Create repository**
-
-### 4.2 코드 푸시
-
-```bash
-# 기존 Origin 리모트 제거 (있는 경우)
-git remote remove origin
-
-# GitHub 리모트 추가
-git remote add origin https://github.com/esin3329/<repo-name>.git
-
-# 코드 푸시
-git branch -M main
-git push -u origin main
-```
-
----
-
-## 5단계: Cloudflare Pages 배포
-
-### 5.1 Pages 프로젝트 생성
+### 4.1 Workers & Pages 프로젝트 생성
 
 1. Cloudflare Dashboard > **Workers & Pages**
-2. **Create** > **Pages** > **Connect to Git**
-3. GitHub 계정 연결 및 저장소 선택
-4. **Begin setup**
+2. **Create** > **Pages** (Workers Builds 사용)
+3. **Connect to Git** > GitHub 계정 연결
+4. 저장소 선택: `esin3329/gamedev-club-platform`
+5. **Begin setup**
 
-### 5.2 빌드 설정
+### 4.2 빌드 설정
 
 | 설정 | 값 |
 |------|-----|
@@ -197,7 +175,7 @@ git push -u origin main
 | **Root directory** | `/` |
 | **Node.js version** | 20.x |
 
-### 5.3 환경변수 설정
+### 4.3 환경변수 설정
 
 **Settings > Environment variables**에서 추가:
 
@@ -206,11 +184,11 @@ git push -u origin main
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase 프로젝트 URL | No |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key | No |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key | **Yes** |
-| `NEXT_PUBLIC_SITE_URL` | Pages 도메인 (예: `https://xxx.pages.dev`) | No |
+| `NEXT_PUBLIC_SITE_URL` | Workers 도메인 | No |
 | `WEBGL_SANDBOX_DOMAIN` | WebGL 빌드 도메인 | No |
 | `CRON_SECRET` | 랜덤 문자열 (32자 이상 권장) | **Yes** |
 
-### 5.4 R2 바인딩 설정
+### 4.4 R2 바인딩 설정
 
 1. **Settings > Functions > R2 bucket bindings**
 2. **Add binding**:
@@ -218,19 +196,23 @@ git push -u origin main
    - R2 bucket: `gamedev-builds`
 3. **Save**
 
-### 5.5 배포
+### 4.5 배포
 
-1. **Deployments** 탭으로 이동
-2. 첫 배포가 자동으로 시작됨
-3. 배포 완료 후 Pages URL 확인 (예: `https://gamedev-club.pages.dev`)
+GitHub에 푸시하면 자동으로 빌드 및 배포됩니다:
+
+```bash
+git push origin main
+```
+
+배포 완료 후 Workers URL 확인 (예: `https://gamedev-club.workers.dev`)
 
 ---
 
-## 6단계: Cron 작업 설정
+## 5단계: Cron 작업 설정
 
-Cloudflare Workers의 cron 트리거를 설정합니다.
+Cloudflare Workers cron 트리거를 설정합니다.
 
-### 6.1 wrangler.jsonc 확인
+### 5.1 wrangler.jsonc 설정
 
 프로젝트의 `wrangler.jsonc`에 cron 설정이 포함되어 있습니다:
 
@@ -245,50 +227,39 @@ Cloudflare Workers의 cron 트리거를 설정합니다.
 }
 ```
 
-### 6.2 Pages Functions에서 Cron 활성화
+### 5.2 Cron 트리거 활성화
 
-현재 Cloudflare Pages Functions는 cron 트리거를 직접 지원하지 않습니다.
-대안으로 별도의 Workers를 사용하거나, 외부 서비스로 API를 호출합니다.
+Workers & Pages 프로젝트에서 Cron 트리거는 자동으로 설정됩니다.
+수동 호출도 가능합니다:
 
-**옵션 A: 별도 Worker 생성 (권장)**
+```bash
+# 보관 정책 cleanup
+curl -H "Authorization: Bearer <CRON_SECRET>" \
+  https://your-site.workers.dev/api/cron/retention
 
-1. Workers & Pages > **Create** > **Workers**
-2. `worker.ts` 내용으로 Worker 생성
-3. **Settings > Triggers > Cron Triggers** 추가
+# Supabase keep-alive
+curl -H "Authorization: Bearer <CRON_SECRET>" \
+  https://your-site.workers.dev/api/cron/keep-alive
+```
 
-**옵션 B: 외부 cron 서비스 사용**
+**대안: 외부 cron 서비스**
 
-무료 서비스 예시:
+Workers cron 트리거가 작동하지 않는 경우:
 - [cron-job.org](https://cron-job.org/) - 무료 cron 서비스
 - [EasyCron](https://www.easycron.com/) - 무료 티어 제공
 
-API 호출 설정:
-```
-URL: https://your-site.pages.dev/api/cron/retention
-Method: GET
-Header: Authorization: Bearer <CRON_SECRET>
-Schedule: 0 */6 * * *
-```
-
-```
-URL: https://your-site.pages.dev/api/cron/keep-alive
-Method: GET
-Header: Authorization: Bearer <CRON_SECRET>
-Schedule: 0 0 * * *
-```
-
 ---
 
-## 7단계: 커스텀 도메인 설정 (선택)
+## 6단계: 커스텀 도메인 설정 (선택)
 
-### 7.1 메인 사이트 도메인
+### 6.1 메인 사이트 도메인
 
-1. Cloudflare Pages > 프로젝트 > **Custom domains**
+1. Cloudflare Workers & Pages > 프로젝트 > **Custom domains**
 2. **Set up a custom domain**
 3. 도메인 입력 (예: `gamedev.yourdomain.com`)
 4. DNS 레코드 자동 생성됨
 
-### 7.2 WebGL 샌드박스 도메인
+### 6.2 WebGL 샌드박스 도메인
 
 WebGL 빌드는 보안을 위해 별도 도메인에서 서빙해야 합니다:
 
@@ -298,7 +269,7 @@ WebGL 빌드는 보안을 위해 별도 도메인에서 서빙해야 합니다:
 
 ---
 
-## 8단계: 배포 확인
+## 7단계: 배포 확인
 
 ### 체크리스트
 
@@ -329,19 +300,63 @@ npm run build:cloudflare
 - Redirect URL이 정확한지 확인
 - Supabase의 Site URL 설정 확인
 
+**10ms CPU 제한 초과 시:**
+- WebGL 업로드: 클라이언트에서 zip 추출 필요 (서버에서 150MB zip 처리 불가)
+- 큰 요청은 분할 처리
+
 ---
 
-## 무료 티어 한도 모니터링
+## 무료 티어 한도 및 제약
 
-### Cloudflare
+### Cloudflare Workers Free
 
-- Dashboard > **Analytics** > 요청 수 확인
-- R2 > **Metrics** > 저장 용량 확인
+| 제약 | 값 | 영향 |
+|------|-----|------|
+| 일일 요청 | 100,000 | 대부분 충분 |
+| CPU 시간/요청 | 10ms | zip 전체 압축 해제 불가 |
+| 메모리 | 128MB | 큰 파일 메모리 로드 불가 |
+| 스크립트 크기 | 10MB (압축 후 1MB) | OpenNext 빌드 크기 주의 |
 
-### Supabase
+**CPU 제한 대응:**
+- WebGL zip 검증: R2 ranged reads로 central directory만 읽음
+- WebGL zip 추출: 클라이언트에서 수행 후 개별 파일 업로드
 
-- Dashboard > **Settings > Billing** > 사용량 확인
-- 7일 비활성 시 일시정지됨 → keep-alive cron으로 방지
+### Cloudflare R2 Free
+
+| 제약 | 값 |
+|------|-----|
+| 저장 용량 | 10GB |
+| Class A 작업 | 1M/월 (PUT, POST, LIST) |
+| Class B 작업 | 10M/월 (GET) |
+
+### Supabase Free
+
+| 제약 | 값 |
+|------|-----|
+| 데이터베이스 | 500MB |
+| 대역폭 | 5GB/월 |
+| 비활성 일시정지 | 7일 |
+
+> keep-alive cron으로 비활성 일시정지 방지
+
+---
+
+## 설정값 기본값
+
+`src/lib/storage/config.ts`에서 환경변수로 오버라이드 가능:
+
+| 설정 | 환경변수 | 기본값 | 설명 |
+|------|---------|--------|------|
+| WebGL 업로드 크기 | `BUILD_WEBGL_MAX_SIZE_MB` | 150 MiB | zip 파일 크기 |
+| PC 빌드 크기 | `BUILD_PC_MAX_SIZE_MB` | 500 MiB | 빌드 파일 크기 |
+| 압축 해제 후 크기 | `BUILD_WEBGL_MAX_UNCOMPRESSED_MB` | 500 MiB | zip-bomb 방지 |
+| 최대 파일 수 | `BUILD_WEBGL_MAX_FILE_COUNT` | 1000 | zip-bomb 방지 |
+| WebGL 보관 개수 | `BUILD_RETENTION_WEBGL_KEEP` | 2 | 최신 N개 유지 |
+| PC 보관 개수 | `BUILD_RETENTION_PC_KEEP` | 1 | 최신 N개 유지 |
+| 업로드 URL 만료 | `PRESIGNED_URL_UPLOAD_EXPIRY_SECONDS` | 3600 (1시간) | |
+| 다운로드 URL 만료 | `PRESIGNED_URL_DOWNLOAD_EXPIRY_SECONDS` | 300 (5분) | |
+
+> **크기 단위**: MB는 MiB (1,048,576 bytes = 1024 × 1024)를 의미합니다.
 
 ---
 
@@ -355,10 +370,10 @@ git commit -m "feat: 새 기능 추가"
 git push origin main
 ```
 
-Cloudflare Pages가 자동으로 빌드 및 배포합니다.
+Cloudflare Workers가 자동으로 빌드 및 배포합니다.
 
 ---
 
 ## 롤백
 
-Cloudflare Pages > **Deployments**에서 이전 배포 선택 > **Rollback to this deployment**
+Cloudflare Workers & Pages > **Deployments**에서 이전 배포 선택 > **Rollback to this deployment**

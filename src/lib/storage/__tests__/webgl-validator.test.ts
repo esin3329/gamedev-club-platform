@@ -1,10 +1,14 @@
 /**
  * WebGL zip 검증 테스트
+ * 
+ * Central Directory 기반 검증 테스트
+ * (전체 zip 압축 해제 없이 메타데이터만 읽음)
  */
 
 import { describe, it, expect } from 'vitest';
 import JSZip from 'jszip';
-import { validateWebGLZip, extractWebGLFiles, getContentType, getContentEncoding } from '../webgl-validator';
+import { validateWebGLZip, getContentType, getContentEncoding, isCompressedFile } from '../webgl-validator';
+import { MiB } from '../config';
 
 async function createTestZip(files: Record<string, string | Uint8Array>): Promise<ArrayBuffer> {
   const zip = new JSZip();
@@ -27,7 +31,8 @@ describe('validateWebGLZip', () => {
     expect(result.valid).toBe(true);
     expect(result.indexHtmlPath).toBe('index.html');
     expect(result.basePath).toBe('');
-    expect(result.files.length).toBe(3);
+    expect(result.fileCount).toBe(3);
+    expect(result.totalUncompressedSize).toBeGreaterThan(0);
   });
 
   it('단일 최상위 폴더 안에 index.html이 있으면 valid (Unity 구조)', async () => {
@@ -96,73 +101,61 @@ describe('validateWebGLZip', () => {
       'large.data': largeContent,
     });
 
-    const result = await validateWebGLZip(zipBuffer, 500 * 1024); // 500KB 제한
+    // 500KB 제한으로 검증
+    const result = await validateWebGLZip(zipBuffer, 500 * 1024);
 
     expect(result.valid).toBe(false);
     expect(result.errorCode).toBe('TOO_LARGE');
+    expect(result.error).toContain('압축 해제 후 크기');
+  });
+
+  it('파일 수 제한 초과 시 invalid', async () => {
+    const files: Record<string, string> = {
+      'index.html': '<html></html>',
+    };
+    // 10개 파일 생성
+    for (let i = 0; i < 10; i++) {
+      files[`file${i}.txt`] = 'content';
+    }
+    const zipBuffer = await createTestZip(files);
+
+    // 5개 제한으로 검증
+    const result = await validateWebGLZip(zipBuffer, undefined, 5);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe('TOO_MANY_FILES');
+    expect(result.error).toContain('파일 수');
   });
 
   it('파일 정보를 올바르게 추출', async () => {
     const zipBuffer = await createTestZip({
       'index.html': '<html></html>',
       'game.wasm': 'wasm',
-      'game.data.br': 'compressed',
       'styles.css': 'body {}',
     });
 
     const result = await validateWebGLZip(zipBuffer);
 
     expect(result.valid).toBe(true);
+    expect(result.files.length).toBe(3);
     
     const htmlFile = result.files.find(f => f.path === 'index.html');
-    expect(htmlFile?.contentType).toBe('text/html');
-    
-    const wasmFile = result.files.find(f => f.path === 'game.wasm');
-    expect(wasmFile?.contentType).toBe('application/wasm');
-    
-    const brFile = result.files.find(f => f.path === 'game.data.br');
-    expect(brFile?.isCompressed).toBe(true);
-    expect(brFile?.contentEncoding).toBe('br');
-    
-    const cssFile = result.files.find(f => f.path === 'styles.css');
-    expect(cssFile?.contentType).toBe('text/css');
-  });
-});
-
-describe('extractWebGLFiles', () => {
-  it('basePath를 제거하고 파일 추출', async () => {
-    const zipBuffer = await createTestZip({
-      'Build/index.html': '<html></html>',
-      'Build/game.js': 'code',
-      'Build/sub/data.bin': 'data',
-    });
-
-    const extractedFiles: Array<{ path: string; size: number }> = [];
-
-    await extractWebGLFiles(zipBuffer, 'Build/', async (path, content) => {
-      extractedFiles.push({ path, size: content.length });
-    });
-
-    expect(extractedFiles).toHaveLength(3);
-    expect(extractedFiles.find(f => f.path === 'index.html')).toBeDefined();
-    expect(extractedFiles.find(f => f.path === 'game.js')).toBeDefined();
-    expect(extractedFiles.find(f => f.path === 'sub/data.bin')).toBeDefined();
+    expect(htmlFile).toBeDefined();
+    expect(htmlFile?.uncompressedSize).toBeGreaterThan(0);
   });
 
-  it('basePath가 없으면 원본 경로 유지', async () => {
+  it('totalUncompressedSize가 정확히 계산됨', async () => {
+    const content1 = 'a'.repeat(100);
+    const content2 = 'b'.repeat(200);
     const zipBuffer = await createTestZip({
-      'index.html': '<html></html>',
-      'game.js': 'code',
+      'index.html': content1,
+      'data.txt': content2,
     });
 
-    const extractedFiles: string[] = [];
+    const result = await validateWebGLZip(zipBuffer);
 
-    await extractWebGLFiles(zipBuffer, '', async (path) => {
-      extractedFiles.push(path);
-    });
-
-    expect(extractedFiles).toContain('index.html');
-    expect(extractedFiles).toContain('game.js');
+    expect(result.valid).toBe(true);
+    expect(result.totalUncompressedSize).toBe(300);
   });
 });
 
@@ -211,5 +204,29 @@ describe('getContentEncoding', () => {
   it('압축되지 않은 파일', () => {
     expect(getContentEncoding('game.wasm')).toBeUndefined();
     expect(getContentEncoding('index.html')).toBeUndefined();
+  });
+});
+
+describe('isCompressedFile', () => {
+  it('Brotli 압축 파일', () => {
+    expect(isCompressedFile('game.wasm.br')).toBe(true);
+    expect(isCompressedFile('data.br')).toBe(true);
+  });
+
+  it('Gzip 압축 파일', () => {
+    expect(isCompressedFile('game.wasm.gz')).toBe(true);
+    expect(isCompressedFile('data.gz')).toBe(true);
+  });
+
+  it('일반 파일', () => {
+    expect(isCompressedFile('game.wasm')).toBe(false);
+    expect(isCompressedFile('index.html')).toBe(false);
+  });
+});
+
+describe('MiB constant', () => {
+  it('MiB = 1,048,576 bytes', () => {
+    expect(MiB).toBe(1024 * 1024);
+    expect(MiB).toBe(1048576);
   });
 });

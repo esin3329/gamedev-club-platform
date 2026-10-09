@@ -1,31 +1,34 @@
 /**
- * WebGL 빌드 zip 검증 유틸리티
+ * WebGL 빌드 zip 검증 유틸리티 (R2 Ranged Reads 최적화)
+ * 
+ * Cloudflare Workers의 10ms CPU 제한을 준수하기 위해:
+ * - 전체 zip을 로드/압축 해제하지 않음
+ * - R2 ranged reads로 End of Central Directory + Central Directory만 읽음
+ * - Central Directory에서 파일 목록과 uncompressed size 추출
  * 
  * Unity와 Godot가 출력하는 WebGL 빌드 구조를 검증합니다.
  * - Unity: Build/ 폴더 안에 index.html 또는 루트에 index.html
  * - Godot: 루트에 index.html
- * 
- * 검증 후 R2에 추출하여 서빙 준비를 합니다.
  */
 
-import JSZip from 'jszip';
+import { getBuildStorageConfig, formatBytes, MiB } from './config';
 
 export interface WebGLValidationResult {
   valid: boolean;
   error?: string;
-  errorCode?: 'NO_INDEX_HTML' | 'INVALID_ZIP' | 'EMPTY_ZIP' | 'TOO_LARGE';
+  errorCode?: 'NO_INDEX_HTML' | 'INVALID_ZIP' | 'EMPTY_ZIP' | 'TOO_LARGE' | 'TOO_MANY_FILES' | 'READ_ERROR';
   indexHtmlPath?: string;
   basePath?: string;
-  files: WebGLFileInfo[];
-  totalSize: number;
+  files: WebGLFileEntry[];
+  totalUncompressedSize: number;
+  fileCount: number;
 }
 
-export interface WebGLFileInfo {
+export interface WebGLFileEntry {
   path: string;
-  size: number;
-  isCompressed: boolean;
-  contentType: string;
-  contentEncoding?: string;
+  compressedSize: number;
+  uncompressedSize: number;
+  isDirectory: boolean;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -61,190 +64,465 @@ const MIME_TYPES: Record<string, string> = {
 
 const COMPRESSED_EXTENSIONS = ['.br', '.gz'];
 
-function getContentType(filename: string): string {
+export function getContentType(filename: string): string {
   const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'));
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
-function getContentEncoding(filename: string): string | undefined {
+export function getContentEncoding(filename: string): string | undefined {
   const lowerName = filename.toLowerCase();
   if (lowerName.endsWith('.br')) return 'br';
   if (lowerName.endsWith('.gz')) return 'gzip';
   return undefined;
 }
 
-function isCompressedFile(filename: string): boolean {
+export function isCompressedFile(filename: string): boolean {
   const lowerName = filename.toLowerCase();
   return COMPRESSED_EXTENSIONS.some(ext => lowerName.endsWith(ext));
 }
 
-/**
- * WebGL zip 파일을 검증합니다.
- * 
- * Unity와 Godot 출력 구조를 모두 지원:
- * - 루트에 index.html이 있는 경우
- * - 단일 최상위 폴더 안에 index.html이 있는 경우 (예: Build/index.html)
- */
-export async function validateWebGLZip(
-  zipBuffer: ArrayBuffer,
-  maxSizeBytes?: number
-): Promise<WebGLValidationResult> {
-  const files: WebGLFileInfo[] = [];
-  let totalSize = 0;
+// ============================================================================
+// ZIP Central Directory 파싱 (Ranged Reads용)
+// ============================================================================
 
-  try {
-    const zip = await JSZip.loadAsync(zipBuffer);
-    const entries = Object.entries(zip.files);
+const EOCD_SIGNATURE = 0x06054b50;  // End of Central Directory
+const EOCD_MIN_SIZE = 22;
+const EOCD_MAX_COMMENT_SIZE = 65535;
+const CD_SIGNATURE = 0x02014b50;    // Central Directory File Header
+const CD_HEADER_SIZE = 46;
+
+interface EndOfCentralDirectory {
+  diskNumber: number;
+  cdDiskNumber: number;
+  cdEntriesOnDisk: number;
+  cdEntriesTotal: number;
+  cdSize: number;
+  cdOffset: number;
+  commentLength: number;
+}
+
+interface CentralDirectoryEntry {
+  fileName: string;
+  compressedSize: number;
+  uncompressedSize: number;
+  isDirectory: boolean;
+  localHeaderOffset: number;
+}
+
+/**
+ * End of Central Directory를 찾고 파싱합니다.
+ * EOCD는 파일 끝에서 최대 65557 bytes 이내에 위치합니다.
+ */
+function parseEOCD(buffer: ArrayBuffer): EndOfCentralDirectory | null {
+  const view = new DataView(buffer);
+  const len = buffer.byteLength;
+  
+  // EOCD signature를 뒤에서부터 탐색
+  for (let i = len - EOCD_MIN_SIZE; i >= Math.max(0, len - EOCD_MIN_SIZE - EOCD_MAX_COMMENT_SIZE); i--) {
+    if (view.getUint32(i, true) === EOCD_SIGNATURE) {
+      return {
+        diskNumber: view.getUint16(i + 4, true),
+        cdDiskNumber: view.getUint16(i + 6, true),
+        cdEntriesOnDisk: view.getUint16(i + 8, true),
+        cdEntriesTotal: view.getUint16(i + 10, true),
+        cdSize: view.getUint32(i + 12, true),
+        cdOffset: view.getUint32(i + 16, true),
+        commentLength: view.getUint16(i + 20, true),
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Central Directory를 파싱하여 파일 목록을 추출합니다.
+ */
+function parseCentralDirectory(buffer: ArrayBuffer, entryCount: number): CentralDirectoryEntry[] {
+  const view = new DataView(buffer);
+  const entries: CentralDirectoryEntry[] = [];
+  let offset = 0;
+  
+  for (let i = 0; i < entryCount && offset < buffer.byteLength; i++) {
+    if (view.getUint32(offset, true) !== CD_SIGNATURE) {
+      break;  // Invalid signature
+    }
     
-    if (entries.length === 0) {
+    const compressedSize = view.getUint32(offset + 20, true);
+    const uncompressedSize = view.getUint32(offset + 24, true);
+    const fileNameLength = view.getUint16(offset + 28, true);
+    const extraFieldLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const localHeaderOffset = view.getUint32(offset + 42, true);
+    
+    const fileNameBytes = new Uint8Array(buffer, offset + CD_HEADER_SIZE, fileNameLength);
+    const fileName = new TextDecoder().decode(fileNameBytes);
+    
+    entries.push({
+      fileName: fileName.replace(/\\/g, '/'),  // Windows 경로 정규화
+      compressedSize,
+      uncompressedSize,
+      isDirectory: fileName.endsWith('/') || fileName.endsWith('\\'),
+      localHeaderOffset,
+    });
+    
+    offset += CD_HEADER_SIZE + fileNameLength + extraFieldLength + commentLength;
+  }
+  
+  return entries;
+}
+
+/**
+ * R2 Bucket의 ranged read를 사용하여 zip central directory를 검증합니다.
+ * 전체 zip을 로드하지 않고 필요한 부분만 읽습니다.
+ * 
+ * @param bucket R2 Bucket 바인딩
+ * @param key R2 object key
+ * @param fileSize 파일 전체 크기 (R2 head에서 얻음)
+ */
+export async function validateWebGLZipFromR2(
+  bucket: R2Bucket,
+  key: string,
+  fileSize: number
+): Promise<WebGLValidationResult> {
+  const config = getBuildStorageConfig();
+  const files: WebGLFileEntry[] = [];
+  
+  try {
+    // 1. EOCD 읽기 (파일 끝에서 최대 65KB)
+    const eocdReadSize = Math.min(fileSize, EOCD_MIN_SIZE + EOCD_MAX_COMMENT_SIZE);
+    const eocdStart = fileSize - eocdReadSize;
+    
+    const eocdObject = await bucket.get(key, {
+      range: { offset: eocdStart, length: eocdReadSize },
+    });
+    
+    if (!eocdObject) {
+      return {
+        valid: false,
+        error: '업로드된 파일을 찾을 수 없습니다.',
+        errorCode: 'READ_ERROR',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: 0,
+      };
+    }
+    
+    const eocdBuffer = await eocdObject.arrayBuffer();
+    const eocd = parseEOCD(eocdBuffer);
+    
+    if (!eocd) {
+      return {
+        valid: false,
+        error: '유효하지 않은 zip 파일입니다.',
+        errorCode: 'INVALID_ZIP',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: 0,
+      };
+    }
+    
+    if (eocd.cdEntriesTotal === 0) {
       return {
         valid: false,
         error: '빌드 파일이 비어 있습니다.',
         errorCode: 'EMPTY_ZIP',
         files: [],
-        totalSize: 0,
+        totalUncompressedSize: 0,
+        fileCount: 0,
       };
     }
-
+    
+    // 2. 파일 수 제한 검사
+    if (eocd.cdEntriesTotal > config.validation.webglMaxFileCount) {
+      return {
+        valid: false,
+        error: `zip 내 파일 수가 제한을 초과합니다. (${eocd.cdEntriesTotal}개 / 최대 ${config.validation.webglMaxFileCount}개)`,
+        errorCode: 'TOO_MANY_FILES',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: eocd.cdEntriesTotal,
+      };
+    }
+    
+    // 3. Central Directory 읽기
+    const cdObject = await bucket.get(key, {
+      range: { offset: eocd.cdOffset, length: eocd.cdSize },
+    });
+    
+    if (!cdObject) {
+      return {
+        valid: false,
+        error: 'zip Central Directory를 읽을 수 없습니다.',
+        errorCode: 'INVALID_ZIP',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: 0,
+      };
+    }
+    
+    const cdBuffer = await cdObject.arrayBuffer();
+    const entries = parseCentralDirectory(cdBuffer, eocd.cdEntriesTotal);
+    
+    // 4. 파일 목록 및 크기 계산
+    let totalUncompressedSize = 0;
     let indexHtmlPath: string | undefined;
     let basePath = '';
     const topLevelItems = new Set<string>();
-
-    for (const [path, file] of entries) {
-      if (file.dir) continue;
-
-      // JSZip에서 압축 해제 전 크기를 직접 접근할 수 없으므로
-      // 파일 내용을 읽어서 크기 확인 (작은 파일에만 적용)
-      // 큰 파일은 나중에 extractWebGLFiles에서 처리
-      const content = await file.async('uint8array');
-      const uncompressedSize = content.length;
-      totalSize += uncompressedSize;
-
-      const normalizedPath = path.replace(/\\/g, '/');
+    
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      
+      totalUncompressedSize += entry.uncompressedSize;
+      
       files.push({
-        path: normalizedPath,
-        size: uncompressedSize,
-        isCompressed: isCompressedFile(normalizedPath),
-        contentType: getContentType(normalizedPath),
-        contentEncoding: getContentEncoding(normalizedPath),
+        path: entry.fileName,
+        compressedSize: entry.compressedSize,
+        uncompressedSize: entry.uncompressedSize,
+        isDirectory: false,
       });
-
-      const firstSegment = normalizedPath.split('/')[0];
+      
+      const firstSegment = entry.fileName.split('/')[0];
       topLevelItems.add(firstSegment);
-
-      if (normalizedPath.toLowerCase() === 'index.html') {
-        indexHtmlPath = normalizedPath;
+      
+      // 루트의 index.html 확인
+      if (entry.fileName.toLowerCase() === 'index.html') {
+        indexHtmlPath = entry.fileName;
         basePath = '';
       }
     }
-
+    
+    // 5. 압축 해제 후 크기 제한 검사
+    if (totalUncompressedSize > config.validation.webglMaxUncompressedBytes) {
+      return {
+        valid: false,
+        error: `압축 해제 후 크기가 제한을 초과합니다. (${formatBytes(totalUncompressedSize)} / 최대 ${formatBytes(config.validation.webglMaxUncompressedBytes)})`,
+        errorCode: 'TOO_LARGE',
+        files,
+        totalUncompressedSize,
+        fileCount: files.length,
+      };
+    }
+    
+    // 6. 단일 최상위 폴더 내 index.html 확인
     if (!indexHtmlPath && topLevelItems.size === 1) {
       const topFolder = Array.from(topLevelItems)[0];
-      const possibleIndexPath = `${topFolder}/index.html`;
+      const possibleIndexPath = `${topFolder}/index.html`.toLowerCase();
       
-      for (const [path] of entries) {
-        const normalizedPath = path.replace(/\\/g, '/').toLowerCase();
-        if (normalizedPath === possibleIndexPath.toLowerCase()) {
-          indexHtmlPath = path.replace(/\\/g, '/');
+      for (const entry of entries) {
+        if (entry.fileName.toLowerCase() === possibleIndexPath) {
+          indexHtmlPath = entry.fileName;
           basePath = topFolder + '/';
           break;
         }
       }
     }
-
+    
+    // 7. 깊은 경로의 index.html 확인 (2단계까지)
     if (!indexHtmlPath) {
-      for (const [path] of entries) {
-        const normalizedPath = path.replace(/\\/g, '/').toLowerCase();
-        if (normalizedPath.endsWith('/index.html') || normalizedPath === 'index.html') {
-          const parts = normalizedPath.split('/');
+      for (const entry of entries) {
+        const lowerPath = entry.fileName.toLowerCase();
+        if (lowerPath.endsWith('/index.html') || lowerPath === 'index.html') {
+          const parts = entry.fileName.split('/');
           if (parts.length <= 2) {
-            indexHtmlPath = path.replace(/\\/g, '/');
+            indexHtmlPath = entry.fileName;
             basePath = parts.length === 2 ? parts[0] + '/' : '';
             break;
           }
         }
       }
     }
-
+    
     if (!indexHtmlPath) {
       return {
         valid: false,
         error: '빌드에 index.html이 필요합니다. Unity/Godot WebGL 빌드 출력을 확인해주세요.',
         errorCode: 'NO_INDEX_HTML',
         files,
-        totalSize,
+        totalUncompressedSize,
+        fileCount: files.length,
       };
     }
-
-    if (maxSizeBytes && totalSize > maxSizeBytes) {
-      return {
-        valid: false,
-        error: `압축 해제 후 크기가 제한을 초과합니다. (${formatSize(totalSize)} / ${formatSize(maxSizeBytes)})`,
-        errorCode: 'TOO_LARGE',
-        files,
-        totalSize,
-      };
-    }
-
+    
     return {
       valid: true,
       indexHtmlPath,
       basePath,
       files,
-      totalSize,
+      totalUncompressedSize,
+      fileCount: files.length,
     };
-
+    
   } catch (error) {
+    console.error('WebGL zip validation error:', error);
+    return {
+      valid: false,
+      error: '파일 검증 중 오류가 발생했습니다.',
+      errorCode: 'READ_ERROR',
+      files: [],
+      totalUncompressedSize: 0,
+      fileCount: 0,
+    };
+  }
+}
+
+// ============================================================================
+// ArrayBuffer 기반 검증 (테스트 및 폴백용)
+// ============================================================================
+
+/**
+ * ArrayBuffer에서 직접 zip central directory를 검증합니다.
+ * 테스트 및 작은 파일용. 실제 프로덕션에서는 validateWebGLZipFromR2 사용.
+ */
+export async function validateWebGLZip(
+  zipBuffer: ArrayBuffer,
+  maxUncompressedBytes?: number,
+  maxFileCount?: number
+): Promise<WebGLValidationResult> {
+  const config = getBuildStorageConfig();
+  const maxUncompressed = maxUncompressedBytes ?? config.validation.webglMaxUncompressedBytes;
+  const maxFiles = maxFileCount ?? config.validation.webglMaxFileCount;
+  const files: WebGLFileEntry[] = [];
+  
+  try {
+    // EOCD 파싱
+    const eocd = parseEOCD(zipBuffer);
+    
+    if (!eocd) {
+      return {
+        valid: false,
+        error: '유효하지 않은 zip 파일입니다.',
+        errorCode: 'INVALID_ZIP',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: 0,
+      };
+    }
+    
+    if (eocd.cdEntriesTotal === 0) {
+      return {
+        valid: false,
+        error: '빌드 파일이 비어 있습니다.',
+        errorCode: 'EMPTY_ZIP',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: 0,
+      };
+    }
+    
+    // 파일 수 제한
+    if (eocd.cdEntriesTotal > maxFiles) {
+      return {
+        valid: false,
+        error: `zip 내 파일 수가 제한을 초과합니다. (${eocd.cdEntriesTotal}개 / 최대 ${maxFiles}개)`,
+        errorCode: 'TOO_MANY_FILES',
+        files: [],
+        totalUncompressedSize: 0,
+        fileCount: eocd.cdEntriesTotal,
+      };
+    }
+    
+    // Central Directory 파싱
+    const cdBuffer = zipBuffer.slice(eocd.cdOffset, eocd.cdOffset + eocd.cdSize);
+    const entries = parseCentralDirectory(cdBuffer, eocd.cdEntriesTotal);
+    
+    let totalUncompressedSize = 0;
+    let indexHtmlPath: string | undefined;
+    let basePath = '';
+    const topLevelItems = new Set<string>();
+    
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      
+      totalUncompressedSize += entry.uncompressedSize;
+      
+      files.push({
+        path: entry.fileName,
+        compressedSize: entry.compressedSize,
+        uncompressedSize: entry.uncompressedSize,
+        isDirectory: false,
+      });
+      
+      const firstSegment = entry.fileName.split('/')[0];
+      topLevelItems.add(firstSegment);
+      
+      if (entry.fileName.toLowerCase() === 'index.html') {
+        indexHtmlPath = entry.fileName;
+        basePath = '';
+      }
+    }
+    
+    // 크기 제한
+    if (totalUncompressedSize > maxUncompressed) {
+      return {
+        valid: false,
+        error: `압축 해제 후 크기가 제한을 초과합니다. (${formatBytes(totalUncompressedSize)} / 최대 ${formatBytes(maxUncompressed)})`,
+        errorCode: 'TOO_LARGE',
+        files,
+        totalUncompressedSize,
+        fileCount: files.length,
+      };
+    }
+    
+    // 단일 폴더 내 index.html
+    if (!indexHtmlPath && topLevelItems.size === 1) {
+      const topFolder = Array.from(topLevelItems)[0];
+      const possibleIndexPath = `${topFolder}/index.html`.toLowerCase();
+      
+      for (const entry of entries) {
+        if (entry.fileName.toLowerCase() === possibleIndexPath) {
+          indexHtmlPath = entry.fileName;
+          basePath = topFolder + '/';
+          break;
+        }
+      }
+    }
+    
+    // 깊은 경로
+    if (!indexHtmlPath) {
+      for (const entry of entries) {
+        const lowerPath = entry.fileName.toLowerCase();
+        if (lowerPath.endsWith('/index.html') || lowerPath === 'index.html') {
+          const parts = entry.fileName.split('/');
+          if (parts.length <= 2) {
+            indexHtmlPath = entry.fileName;
+            basePath = parts.length === 2 ? parts[0] + '/' : '';
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!indexHtmlPath) {
+      return {
+        valid: false,
+        error: '빌드에 index.html이 필요합니다. Unity/Godot WebGL 빌드 출력을 확인해주세요.',
+        errorCode: 'NO_INDEX_HTML',
+        files,
+        totalUncompressedSize,
+        fileCount: files.length,
+      };
+    }
+    
+    return {
+      valid: true,
+      indexHtmlPath,
+      basePath,
+      files,
+      totalUncompressedSize,
+      fileCount: files.length,
+    };
+    
+  } catch (error) {
+    console.error('WebGL zip validation error:', error);
     return {
       valid: false,
       error: '유효하지 않은 zip 파일입니다.',
       errorCode: 'INVALID_ZIP',
       files: [],
-      totalSize: 0,
+      totalUncompressedSize: 0,
+      fileCount: 0,
     };
   }
 }
 
-/**
- * zip에서 파일을 추출하여 콜백으로 전달합니다.
- * 메모리 효율을 위해 스트리밍 방식으로 처리합니다.
- */
-export async function extractWebGLFiles(
-  zipBuffer: ArrayBuffer,
-  basePath: string,
-  onFile: (path: string, content: Uint8Array, info: WebGLFileInfo) => Promise<void>
-): Promise<void> {
-  const zip = await JSZip.loadAsync(zipBuffer);
-  
-  for (const [path, file] of Object.entries(zip.files)) {
-    if (file.dir) continue;
-
-    const normalizedPath = path.replace(/\\/g, '/');
-    
-    let targetPath = normalizedPath;
-    if (basePath && normalizedPath.startsWith(basePath)) {
-      targetPath = normalizedPath.slice(basePath.length);
-    }
-
-    const content = await file.async('uint8array');
-    const info: WebGLFileInfo = {
-      path: targetPath,
-      size: content.length,
-      isCompressed: isCompressedFile(targetPath),
-      contentType: getContentType(targetPath),
-      contentEncoding: getContentEncoding(targetPath),
-    };
-
-    await onFile(targetPath, content, info);
-  }
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-export { MIME_TYPES, getContentType, getContentEncoding };
+export { MIME_TYPES };

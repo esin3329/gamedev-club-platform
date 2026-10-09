@@ -109,7 +109,7 @@ class R2StorageClient {
       },
     });
 
-    const expiresIn = 3600; // 1시간
+    const expiresIn = storageConfig.presignedUrl.uploadExpirySeconds;
     const url = await getSignedUrl(this.client, command, { expiresIn });
     
     return {
@@ -143,7 +143,8 @@ class R2StorageClient {
     }
     
     const command = new PutObjectCommand(commandInput);
-    const expiresIn = 3600;
+    const storageConfig = getBuildStorageConfig();
+    const expiresIn = storageConfig.presignedUrl.uploadExpirySeconds;
     const url = await getSignedUrl(this.client, command, { expiresIn });
     
     return {
@@ -167,21 +168,23 @@ class R2StorageClient {
    */
   async getDownloadPresignedUrl(
     key: string,
-    expiresInSeconds: number = 300 // 기본 5분
+    expiresInSeconds?: number
   ): Promise<PresignedUrlResult> {
+    const storageConfig = getBuildStorageConfig();
+    const expiresIn = expiresInSeconds ?? storageConfig.presignedUrl.downloadExpirySeconds;
     const command = new GetObjectCommand({
       Bucket: this.config.bucketName,
       Key: key,
     });
 
     const url = await getSignedUrl(this.client, command, { 
-      expiresIn: expiresInSeconds 
+      expiresIn 
     });
     
     return {
       url,
       key,
-      expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
+      expiresAt: new Date(Date.now() + expiresIn * 1000),
     };
   }
 

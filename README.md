@@ -2,6 +2,8 @@
 
 대학교 게임 개발 동아리를 위한 통합 지원 플랫폼입니다.
 
+**GitHub**: https://github.com/esin3329/gamedev-club-platform
+
 ## 주요 기능 (MVP)
 
 - **회원 관리**: Discord OAuth 로그인, 가입 승인제, 기수 관리
@@ -18,8 +20,9 @@
 - **Backend**: Supabase (PostgreSQL, Auth, RLS)
 - **Storage**: Cloudflare R2 (빌드 파일)
 - **Authentication**: Discord OAuth (via Supabase Auth)
-- **Deployment**: Cloudflare Pages (OpenNext 어댑터)
+- **Deployment**: Cloudflare Workers (OpenNext 어댑터)
 - **Scheduled Jobs**: Cloudflare Workers cron 트리거
+- **Build System**: GitHub → Cloudflare Workers Builds (자동 배포)
 
 ## 로컬 개발 환경 설정
 
@@ -32,8 +35,8 @@
 ### 1. 저장소 클론 및 의존성 설치
 
 ```bash
-git clone https://github.com/esin3329/<repo-name>.git
-cd <repo-name>
+git clone https://github.com/esin3329/gamedev-club-platform.git
+cd gamedev-club-platform
 npm install
 ```
 
@@ -101,10 +104,12 @@ npm run preview
 
 | 서비스 | 용도 | 설정 위치 |
 |--------|------|----------|
-| **Cloudflare** | 웹 호스팅, R2 스토리지 | [Cloudflare Dashboard](https://dash.cloudflare.com/) |
+| **Cloudflare** | Workers 호스팅, R2 스토리지 | [Cloudflare Dashboard](https://dash.cloudflare.com/) |
 | **GitHub** | 소스 코드 저장소 | [GitHub](https://github.com/) |
 
 모든 서비스는 **무료 티어**로 운영 가능합니다.
+
+> **Cloudflare Workers Free 제약**: 요청당 10ms CPU 제한으로 인해 서버에서 대용량 zip 압축 해제가 불가능합니다. WebGL 빌드는 클라이언트에서 zip을 추출한 후 개별 파일을 업로드하는 방식으로 처리됩니다.
 
 ### Discord OAuth 설정 방법
 
@@ -118,9 +123,10 @@ npm run preview
 ### Cloudflare 설정 방법
 
 1. [Cloudflare Dashboard](https://dash.cloudflare.com/)에서 R2 버킷 생성 (`gamedev-builds`)
-2. Pages 프로젝트 생성 → GitHub 저장소 연결
+2. Workers & Pages에서 GitHub 저장소 연결 (자동 배포)
 3. 환경변수 설정 (Settings > Environment variables)
-4. WebGL 빌드용 커스텀 도메인 설정 (Workers Routes 또는 별도 도메인)
+4. R2 바인딩 설정 (Settings > Functions > R2 bucket bindings)
+5. WebGL 빌드용 커스텀 도메인 설정
 
 상세 배포 가이드: [docs/deploy.md](docs/deploy.md)
 
