@@ -23,6 +23,10 @@
 | `bug_reports` | 버그 리포트 | F5 피드백 |
 | `bug_report_screenshots` | 버그 스크린샷 | F5 피드백 |
 | `audit_logs` | 감사 로그 | NFR-S9 보안 |
+| `notices` | 공지사항 | F6 공지·일정 |
+| `notice_attachments` | 공지 첨부파일 | F6 공지·일정 |
+| `events` | 일정/행사 | F6 공지·일정 |
+| `event_projects` | 행사-프로젝트 연결 | F6 공지·일정 (P1) |
 
 ## Enum 타입
 
@@ -68,6 +72,20 @@
 ### bug_status (버그 상태)
 - `new`, `confirmed`, `in_progress`, `fixed`, `cannot_reproduce`, `deferred`
 
+### notice_category (공지 카테고리)
+- `general`: 일반
+- `game_jam`: 게임잼
+- `showcase`: 쇼케이스
+- `recruitment`: 모집
+- `other`: 기타
+
+### event_type (일정 유형)
+- `game_jam`: 게임잼
+- `showcase`: 쇼케이스
+- `deadline`: 마감일
+- `regular_meeting`: 정기 모임
+- `other`: 기타
+
 ## 주요 관계
 
 ### 회원 관리
@@ -89,6 +107,17 @@ projects
             ├── ratings (1:N)
             ├── feedback_comments (1:N)
             └── bug_reports (1:N)
+```
+
+### 공지·일정 관리
+```
+notices (공지사항)
+    ├── notice_attachments (1:N) - 첨부파일
+    └── events (1:1) - 관련 일정 (선택)
+
+events (일정)
+    ├── notices (1:1) - 관련 공지 (선택)
+    └── event_projects (1:N) ─── projects (N:1) - 행사 참가 프로젝트
 ```
 
 ## ER 다이어그램
@@ -127,6 +156,17 @@ erDiagram
     
     %% 감사 로그
     profiles ||--o{ audit_logs : "performs"
+    
+    %% 공지·일정 관리
+    profiles ||--o{ notices : "writes"
+    notices ||--o{ notice_attachments : "has"
+    profiles ||--o{ notice_attachments : "uploads"
+    notices ||--o| events : "relates to"
+    profiles ||--o{ events : "creates"
+    events ||--o| notices : "relates to"
+    events ||--o{ event_projects : "has"
+    projects ||--o{ event_projects : "participates"
+    profiles ||--o{ event_projects : "registers"
 
     cohorts {
         uuid id PK
@@ -311,6 +351,48 @@ erDiagram
         uuid target_id
         jsonb details
     }
+    
+    notices {
+        uuid id PK
+        varchar title
+        text content
+        notice_category category
+        boolean is_pinned
+        uuid author_id FK
+        uuid related_event_id FK
+        boolean is_deleted
+    }
+    
+    notice_attachments {
+        uuid id PK
+        uuid notice_id FK
+        varchar storage_key
+        varchar file_name
+        int file_size
+        varchar mime_type
+        uuid uploader_id FK
+    }
+    
+    events {
+        uuid id PK
+        varchar title
+        event_type event_type
+        text description
+        timestamptz start_at
+        timestamptz end_at
+        varchar location
+        uuid related_notice_id FK
+        uuid author_id FK
+        boolean is_deleted
+    }
+    
+    event_projects {
+        uuid id PK
+        uuid event_id FK
+        uuid project_id FK
+        uuid registered_by FK
+        timestamptz registered_at
+    }
 ```
 
 ## RLS 정책 요약
@@ -351,9 +433,27 @@ FROM build_rating_stats
 WHERE build_id = '...';
 ```
 
+## 뷰 (추가)
+
+### upcoming_events
+다가오는 2주 이내의 일정을 조회합니다.
+
+```sql
+SELECT id, title, event_type, start_at, end_at, location, related_notice_title
+FROM upcoming_events;
+```
+
+### recent_notices
+최근 공지사항을 고정 공지 우선, 최신순으로 조회합니다.
+
+```sql
+SELECT id, title, category, is_pinned, author_name, created_at, related_event_title
+FROM recent_notices;
+```
+
 ## TODO / 향후 확장
 
-- [ ] 공지사항 (notices) 테이블
-- [ ] 일정 (events) 테이블
+- [x] 공지사항 (notices) 테이블 ✅ 00003_notices_and_events.sql
+- [x] 일정 (events) 테이블 ✅ 00003_notices_and_events.sql
+- [x] 프로젝트-행사 연결 (event_projects) 테이블 ✅ 00003_notices_and_events.sql
 - [ ] 알림 (notifications) 테이블 (P1)
-- [ ] 프로젝트-행사 연결 (event_projects) 테이블 (P1)
