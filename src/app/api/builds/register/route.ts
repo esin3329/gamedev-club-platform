@@ -9,6 +9,7 @@
  *    - 클라이언트가 zip을 R2에 업로드 완료 후 호출
  *    - 서버가 R2 ranged reads로 central directory를 읽어 검증
  *    - index.html 존재, 파일 수/크기 제한 확인
+ *    - 검증 결과를 DB에 저장 (pending_validations 테이블)
  *    - 검증 통과 시 expectedFiles 목록 반환
  * 
  * 2. 파일 업로드 (클라이언트)
@@ -17,11 +18,17 @@
  * 
  * 3. 등록 완료 (action: 'complete')
  *    - 클라이언트가 모든 파일 업로드 완료 후 호출
- *    - 서버가 R2에 업로드된 파일 세트를 검증
- *    - expectedFiles와 실제 업로드된 파일 비교 (이름, 크기)
+ *    - 서버가 저장된 expectedFiles를 DB에서 조회 (클라이언트 입력 무시)
+ *    - R2에 업로드된 파일의 실제 크기를 검증
  *    - 매칭되면 DB에 등록하고 playable로 표시
  * 
  * PC 빌드: 메타데이터만 DB 등록 (zip 그대로 저장)
+ * 
+ * Security Fixes (TC-F4-39+):
+ * - expectedFiles stored server-side, not trusted from client
+ * - Storage keys derived server-side, not from client
+ * - Actual R2 file sizes compared against validated sizes
+ * - Abandoned uploads cleaned up after 24h expiry
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -35,7 +42,6 @@ import {
 import { 
   validateWebGLZipFromR2,
   validateWebGLZip,
-  type WebGLFileEntry,
 } from '@/lib/storage/webgl-validator';
 import {
   getR2BindingClient,
@@ -46,7 +52,6 @@ interface ValidateRequest {
   action: 'validate';
   projectId: string;
   buildId: string;
-  storageKey: string;
   fileSize: number;
 }
 
@@ -57,8 +62,6 @@ interface CompleteRequest {
   version: string;
   releaseNotes?: string;
   testRequest?: string;
-  /** 서버가 validate에서 반환한 expectedFiles */
-  expectedFiles: ExpectedFile[];
 }
 
 interface PCRegisterRequest {
@@ -79,6 +82,22 @@ interface ExpectedFile {
 }
 
 type RegisterRequest = ValidateRequest | CompleteRequest | PCRegisterRequest;
+
+/**
+ * Derive the temp zip storage key server-side.
+ * This prevents clients from pointing validation at another project's objects.
+ */
+function deriveTempZipKey(projectId: string, buildId: string): string {
+  return `uploads/${projectId}/${buildId}.zip`;
+}
+
+/**
+ * Validate that a storage key belongs to the expected project prefix.
+ */
+function validateStorageKeyPrefix(key: string, projectId: string): boolean {
+  const expectedPrefix = `uploads/${projectId}/`;
+  return key.startsWith(expectedPrefix);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -139,15 +158,17 @@ export async function POST(request: NextRequest) {
 /**
  * WebGL zip 검증 (모든 크기의 zip에 대해 서버 사이드 검증)
  * R2 ranged reads로 central directory만 읽어서 검증
+ * 
+ * Security: Storage key is derived server-side from projectId/buildId
  */
 async function handleWebGLValidate(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   body: ValidateRequest
 ) {
-  const { projectId, buildId, storageKey, fileSize } = body;
+  const { projectId, buildId, fileSize } = body;
 
-  if (!projectId || !buildId || !storageKey || !fileSize) {
+  if (!projectId || !buildId || !fileSize) {
     return NextResponse.json(
       { error: '필수 파라미터가 누락되었습니다.' },
       { status: 400 }
@@ -170,6 +191,9 @@ async function handleWebGLValidate(
     );
   }
 
+  // Server-derived storage key (not from client)
+  const tempStorageKey = deriveTempZipKey(projectId, buildId);
+
   const storage = getStorageClient();
   const config = getBuildStorageConfig();
   const r2Bucket = getR2Binding();
@@ -180,17 +204,15 @@ async function handleWebGLValidate(
     // R2 바인딩으로 ranged reads 검증 (Cloudflare Workers 환경)
     validation = await validateWebGLZipFromR2(
       r2Bucket,
-      storageKey,
+      tempStorageKey,
       fileSize
     );
   } else {
     // 폴백: presigned URL로 EOCD + Central Directory만 다운로드
-    // Central Directory 크기는 파일 수에 비례 (최대 1000개 × ~100bytes ≈ 100KB)
-    const eocdReadSize = Math.min(fileSize, 66000); // EOCD + comment
+    const eocdReadSize = Math.min(fileSize, 66000);
     
-    const zipUrl = await storage.getDownloadPresignedUrl(storageKey);
+    const zipUrl = await storage.getDownloadPresignedUrl(tempStorageKey);
     
-    // 먼저 EOCD를 읽어서 CD 위치 파악
     const eocdResponse = await fetch(zipUrl.url, {
       headers: { 'Range': `bytes=${fileSize - eocdReadSize}-${fileSize - 1}` },
     });
@@ -204,8 +226,6 @@ async function handleWebGLValidate(
     
     const eocdBuffer = await eocdResponse.arrayBuffer();
     
-    // EOCD에서 CD 위치 추출 후 CD만 추가로 읽기
-    // 간단히 전체 EOCD + CD를 포함하는 범위를 읽음 (최대 ~170KB for 1000 files)
     const maxCdSize = config.validation.webglMaxFileCount * 100 + 66000;
     const rangeStart = Math.max(0, fileSize - maxCdSize);
     
@@ -222,7 +242,6 @@ async function handleWebGLValidate(
     
     const cdBuffer = await cdResponse.arrayBuffer();
     
-    // 부분 버퍼로 검증 (validateWebGLZip은 EOCD + CD가 있으면 동작)
     validation = await validateWebGLZip(
       cdBuffer,
       config.validation.webglMaxUncompressedBytes,
@@ -231,9 +250,9 @@ async function handleWebGLValidate(
   }
 
   if (!validation.valid) {
-    // 검증 실패 시 업로드된 zip 삭제
+    // 검증 실패 시 업로드된 zip 삭제 (server-derived key)
     try {
-      await storage.deleteBuild(storageKey);
+      await storage.deleteBuild(tempStorageKey);
     } catch {
       console.error('Failed to cleanup invalid zip');
     }
@@ -247,12 +266,46 @@ async function handleWebGLValidate(
     );
   }
 
-  // 검증 성공: 클라이언트에게 expectedFiles 반환
-  // 클라이언트는 이 목록에 맞게 파일을 추출하여 업로드해야 함
+  // Build expected files list with normalized paths
   const expectedFiles: ExpectedFile[] = validation.files.map(f => ({
     path: validation.basePath ? f.path.replace(validation.basePath, '') : f.path,
     uncompressedSize: f.uncompressedSize,
   }));
+
+  // Store validation result server-side (not returned to client for re-submission)
+  // Delete any existing pending validation for this buildId
+  await supabase
+    .from('pending_validations')
+    .delete()
+    .eq('build_id', buildId);
+
+  const { error: insertError } = await supabase
+    .from('pending_validations')
+    .insert({
+      build_id: buildId,
+      project_id: projectId,
+      user_id: userId,
+      temp_storage_key: tempStorageKey,
+      expected_files: expectedFiles,
+      base_path: validation.basePath || null,
+      file_count: validation.fileCount,
+      total_uncompressed_size: validation.totalUncompressedSize,
+      status: 'pending',
+    });
+
+  if (insertError) {
+    console.error('Failed to store validation:', insertError);
+    // Clean up the zip since we can't track it
+    try {
+      await storage.deleteBuild(tempStorageKey);
+    } catch {
+      console.error('Failed to cleanup zip after validation storage error');
+    }
+    return NextResponse.json(
+      { error: '검증 결과를 저장하는데 실패했습니다.' },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({
     validated: true,
@@ -269,16 +322,20 @@ async function handleWebGLValidate(
 
 /**
  * WebGL 업로드 완료 검증 및 등록
- * R2에 업로드된 파일 세트를 expectedFiles와 비교
+ * 
+ * Security:
+ * - Fetches expectedFiles from server-side storage (not from client)
+ * - Compares actual R2 object sizes against validated sizes
+ * - Uses server-derived storage key for cleanup
  */
 async function handleWebGLComplete(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   body: CompleteRequest
 ) {
-  const { projectId, buildId, version, releaseNotes, testRequest, expectedFiles } = body;
+  const { projectId, buildId, version, releaseNotes, testRequest } = body;
 
-  if (!projectId || !buildId || !version || !expectedFiles || expectedFiles.length === 0) {
+  if (!projectId || !buildId || !version) {
     return NextResponse.json(
       { error: '필수 파라미터가 누락되었습니다.' },
       { status: 400 }
@@ -301,27 +358,72 @@ async function handleWebGLComplete(
     );
   }
 
+  // Fetch server-stored validation (not from client)
+  const { data: pendingValidation, error: fetchError } = await supabase
+    .from('pending_validations')
+    .select('*')
+    .eq('build_id', buildId)
+    .eq('project_id', projectId)
+    .eq('user_id', userId)
+    .eq('status', 'pending')
+    .single();
+
+  if (fetchError || !pendingValidation) {
+    return NextResponse.json(
+      { 
+        error: '유효한 검증 기록이 없습니다. validate를 먼저 호출해주세요.',
+        errorCode: 'NO_PENDING_VALIDATION',
+      },
+      { status: 400 }
+    );
+  }
+
+  // Check if validation has expired
+  if (new Date(pendingValidation.expires_at) < new Date()) {
+    // Mark as expired
+    await supabase
+      .from('pending_validations')
+      .update({ status: 'expired' })
+      .eq('id', pendingValidation.id);
+
+    return NextResponse.json(
+      { 
+        error: '검증이 만료되었습니다. 다시 업로드해주세요.',
+        errorCode: 'VALIDATION_EXPIRED',
+      },
+      { status: 400 }
+    );
+  }
+
+  // Use server-stored expectedFiles (ignore any client-supplied ones)
+  const expectedFiles: ExpectedFile[] = pendingValidation.expected_files as ExpectedFile[];
+  const tempStorageKey = pendingValidation.temp_storage_key;
+
   const storage = getStorageClient();
   const config = getBuildStorageConfig();
   const r2Binding = getR2BindingClient();
+  const r2Bucket = getR2Binding();
   
   const prefix = `webgl/${projectId}/${buildId}/`;
 
-  // R2에 업로드된 파일 목록 조회
+  // R2에 업로드된 파일 목록 조회 (with actual sizes)
   let uploadedFiles: { key: string; size: number }[] = [];
   
-  if (r2Binding) {
-    const keys = await r2Binding.list(prefix);
-    // 각 파일의 크기를 가져오기 위해 head 호출 필요
-    // R2 바인딩의 list는 size를 포함하지 않으므로 별도 처리
-    for (const key of keys) {
-      const relativePath = key.replace(prefix, '');
-      if (relativePath) {
-        uploadedFiles.push({ key: relativePath, size: 0 }); // 크기는 아래에서 검증
+  if (r2Bucket) {
+    // R2 binding list() returns objects with size
+    let cursor: string | undefined;
+    do {
+      const result = await r2Bucket.list({ prefix, cursor });
+      for (const obj of result.objects) {
+        const relativePath = obj.key.replace(prefix, '');
+        if (relativePath) {
+          uploadedFiles.push({ key: relativePath, size: obj.size });
+        }
       }
-    }
+      cursor = result.truncated ? result.cursor : undefined;
+    } while (cursor);
   } else {
-    // AWS SDK로 목록 조회
+    // AWS SDK로 목록 조회 (already returns size)
     const listed = await storage.listObjects(prefix);
     uploadedFiles = listed.map(obj => ({
       key: obj.key.replace(prefix, ''),
@@ -341,14 +443,14 @@ async function handleWebGLComplete(
     );
   }
 
-  // 2. expectedFiles와 비교
-  const expectedSet = new Map(expectedFiles.map(f => [f.path.toLowerCase(), f]));
-  const uploadedSet = new Set(uploadedFiles.map(f => f.key.toLowerCase()));
+  // 2. Build lookup maps for comparison
+  const expectedMap = new Map(expectedFiles.map(f => [f.path.toLowerCase(), f]));
+  const uploadedMap = new Map(uploadedFiles.map(f => [f.key.toLowerCase(), f]));
   
-  // 누락된 파일 확인
+  // 3. Check for missing files
   const missingFiles: string[] = [];
   for (const expected of expectedFiles) {
-    if (!uploadedSet.has(expected.path.toLowerCase())) {
+    if (!uploadedMap.has(expected.path.toLowerCase())) {
       missingFiles.push(expected.path);
     }
   }
@@ -368,10 +470,10 @@ async function handleWebGLComplete(
     );
   }
 
-  // 3. 예상치 못한 파일 확인 (보안)
+  // 4. Check for unexpected files (security)
   const unexpectedFiles: string[] = [];
   for (const uploaded of uploadedFiles) {
-    if (!expectedSet.has(uploaded.key.toLowerCase())) {
+    if (!expectedMap.has(uploaded.key.toLowerCase())) {
       unexpectedFiles.push(uploaded.key);
     }
   }
@@ -391,7 +493,57 @@ async function handleWebGLComplete(
     );
   }
 
-  // 4. 파일 수 제한 재확인
+  // 5. Verify actual file sizes match validated uncompressed sizes
+  // Allow some tolerance for encoding differences (up to 5% or 1KB, whichever is larger)
+  const sizeMismatches: { path: string; expected: number; actual: number }[] = [];
+  let totalActualSize = 0;
+
+  for (const uploaded of uploadedFiles) {
+    const expected = expectedMap.get(uploaded.key.toLowerCase());
+    if (expected) {
+      totalActualSize += uploaded.size;
+      
+      // Size tolerance: 5% or 1KB, whichever is larger
+      const tolerance = Math.max(expected.uncompressedSize * 0.05, 1024);
+      const sizeDiff = Math.abs(uploaded.size - expected.uncompressedSize);
+      
+      if (sizeDiff > tolerance) {
+        sizeMismatches.push({
+          path: uploaded.key,
+          expected: expected.uncompressedSize,
+          actual: uploaded.size,
+        });
+      }
+    }
+  }
+
+  if (sizeMismatches.length > 0) {
+    const maxShow = 5;
+    const shown = sizeMismatches.slice(0, maxShow).map(m => 
+      `${m.path}: expected ${formatBytes(m.expected)}, got ${formatBytes(m.actual)}`
+    );
+    
+    return NextResponse.json(
+      { 
+        error: `파일 크기가 검증된 값과 다릅니다: ${shown.join('; ')}${sizeMismatches.length > maxShow ? ` 외 ${sizeMismatches.length - maxShow}개` : ''}`,
+        errorCode: 'SIZE_MISMATCH',
+      },
+      { status: 400 }
+    );
+  }
+
+  // 6. Enforce total size cap on actual uploaded bytes
+  if (totalActualSize > config.validation.webglMaxUncompressedBytes) {
+    return NextResponse.json(
+      { 
+        error: `총 업로드 크기가 제한을 초과합니다. (${formatBytes(totalActualSize)} / 최대 ${formatBytes(config.validation.webglMaxUncompressedBytes)})`,
+        errorCode: 'TOO_LARGE',
+      },
+      { status: 400 }
+    );
+  }
+
+  // 7. File count re-check
   if (uploadedFiles.length > config.validation.webglMaxFileCount) {
     return NextResponse.json(
       { 
@@ -402,20 +554,7 @@ async function handleWebGLComplete(
     );
   }
 
-  // 5. 총 크기 계산 및 제한 확인
-  const totalSize = expectedFiles.reduce((sum, f) => sum + f.uncompressedSize, 0);
-  
-  if (totalSize > config.validation.webglMaxUncompressedBytes) {
-    return NextResponse.json(
-      { 
-        error: `총 크기가 제한을 초과합니다. (${formatBytes(totalSize)} / 최대 ${formatBytes(config.validation.webglMaxUncompressedBytes)})`,
-        errorCode: 'TOO_LARGE',
-      },
-      { status: 400 }
-    );
-  }
-
-  // 6. DB에 등록
+  // 8. DB에 등록
   const { data: build, error: insertError } = await supabase
     .from('builds')
     .insert({
@@ -426,7 +565,7 @@ async function handleWebGLComplete(
       release_notes: releaseNotes || null,
       test_request: testRequest || null,
       storage_key: prefix,
-      file_size: totalSize,
+      file_size: totalActualSize,
       uploader_id: userId,
     })
     .select()
@@ -434,21 +573,37 @@ async function handleWebGLComplete(
 
   if (insertError) {
     console.error('DB insert error:', insertError);
-    // 실패 시 업로드된 파일 정리
+    // Mark validation as failed
+    await supabase
+      .from('pending_validations')
+      .update({ status: 'failed' })
+      .eq('id', pendingValidation.id);
+    
+    // Clean up uploaded files
     try {
-      await storage.deleteWebGLBuild(projectId, buildId);
+      if (r2Binding) {
+        await r2Binding.deleteWebGLBuild(projectId, buildId);
+      } else {
+        await storage.deleteWebGLBuild(projectId, buildId);
+      }
     } catch {
       console.error('Failed to cleanup uploaded files');
     }
     throw insertError;
   }
 
-  // 7. 보관 정책 적용
+  // 9. Mark validation as completed
+  await supabase
+    .from('pending_validations')
+    .update({ status: 'completed' })
+    .eq('id', pendingValidation.id);
+
+  // 10. 보관 정책 적용
   await runRetentionCleanup(supabase, projectId);
 
-  // 8. 원본 zip 삭제 (있는 경우)
+  // 11. 원본 zip 삭제 (server-derived key)
   try {
-    await storage.deleteBuild(`uploads/${projectId}/${buildId}.zip`);
+    await storage.deleteBuild(tempStorageKey);
   } catch {
     // 원본 zip이 없을 수 있음
   }
@@ -463,7 +618,7 @@ async function handleWebGLComplete(
       buildType: 'webgl',
       playUrl,
       fileCount: uploadedFiles.length,
-      totalSize: formatBytes(totalSize),
+      totalSize: formatBytes(totalActualSize),
     },
   });
 }
@@ -478,6 +633,15 @@ async function handlePCRegistration(
   if (!projectId || !buildId || !version || !storageKey) {
     return NextResponse.json(
       { error: '필수 파라미터가 누락되었습니다.' },
+      { status: 400 }
+    );
+  }
+
+  // Validate that storageKey belongs to this project
+  const expectedPrefix = `pc/${projectId}/`;
+  if (!storageKey.startsWith(expectedPrefix)) {
+    return NextResponse.json(
+      { error: '잘못된 스토리지 키입니다.' },
       { status: 400 }
     );
   }

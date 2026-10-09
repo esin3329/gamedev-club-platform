@@ -33,6 +33,7 @@ sudo -u postgres psql -d $DB_NAME -f supabase/tests/setup.sql
 sudo -u postgres psql -d $DB_NAME -f supabase/migrations/00001_initial_schema.sql
 sudo -u postgres psql -d $DB_NAME -f supabase/migrations/00002_rls_policies.sql
 sudo -u postgres psql -d $DB_NAME -f supabase/migrations/00003_notices_and_events.sql
+sudo -u postgres psql -d $DB_NAME -f supabase/migrations/00004_pending_validations.sql
 
 # Run tests
 echo ""

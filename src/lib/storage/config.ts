@@ -49,6 +49,12 @@ export interface BuildStorageConfig {
     /** 다운로드용 presigned URL 만료 시간 (초). 기본값: 300 (5분) */
     downloadExpirySeconds: number;
   };
+  cleanup: {
+    /** 방치된 업로드 만료 시간 (ms). 기본값: 24시간 */
+    orphanedUploadMaxAgeMs: number;
+    /** 검증 만료 시간 (ms). 기본값: 24시간 */
+    validationExpiryMs: number;
+  };
   allowedExtensions: {
     buildArchive: string[];
     image: string[];
@@ -134,6 +140,19 @@ export function getBuildStorageConfig(): BuildStorageConfig {
         process.env.PRESIGNED_URL_DOWNLOAD_EXPIRY_SECONDS,
         300  // 기본값: 5분 (300초)
       ),
+    },
+
+    cleanup: {
+      // CLEANUP_ORPHANED_UPLOAD_MAX_AGE_HOURS: 방치된 업로드 만료 시간
+      orphanedUploadMaxAgeMs: parseEnvInt(
+        process.env.CLEANUP_ORPHANED_UPLOAD_MAX_AGE_HOURS,
+        24  // 기본값: 24시간
+      ) * 60 * 60 * 1000,
+      // CLEANUP_VALIDATION_EXPIRY_HOURS: 검증 만료 시간
+      validationExpiryMs: parseEnvInt(
+        process.env.CLEANUP_VALIDATION_EXPIRY_HOURS,
+        24  // 기본값: 24시간
+      ) * 60 * 60 * 1000,
     },
     
     allowedExtensions: {

@@ -6,11 +6,12 @@ This document maps P0 test scenario IDs from `test-scenarios-v1.1.md` to their a
 
 | Category | Automated | Needs External Accounts | Manual |
 |----------|-----------|------------------------|--------|
-| Upload/Storage Config | 38 | 0 | 0 |
+| Upload/Storage Config | 41 | 0 | 0 |
 | WebGL Validation | 50 | 0 | 0 |
+| WebGL Two-Phase Security | 15 | 0 | 0 |
 | Retention Logic | 19 | 0 | 0 |
 | RLS Policies | 10 | 0 | 0 |
-| **Total** | **117** | See below | See below |
+| **Total** | **135** | See below | See below |
 
 ## Running Tests
 
@@ -40,6 +41,29 @@ npm run test:all
 | TC-F4-35 | Upload presigned URL expiry = 3600s | ✅ Automated |
 | TC-F4-35 | Download presigned URL expiry = 300s | ✅ Automated |
 | TC-F4-35 | Environment variable override for expiry times | ✅ Automated |
+| TC-F4-42 | Cleanup orphaned upload max age default 24h | ✅ Automated |
+| TC-F4-42 | Validation expiry default 24h | ✅ Automated |
+| TC-F4-42 | Cleanup config environment variable override | ✅ Automated |
+
+### WebGL Two-Phase Upload Security Tests (`route.test.ts`)
+
+| TC-ID | Description | Status |
+|-------|-------------|--------|
+| TC-F4-39 | ExpectedFiles stored server-side (not from client) | ✅ Automated |
+| TC-F4-39 | Complete requires pending validation record | ✅ Automated |
+| TC-F4-39 | Expired validation rejected | ✅ Automated |
+| TC-F4-40 | Storage key derived server-side from projectId/buildId | ✅ Automated |
+| TC-F4-40 | Malicious storage key prefix rejected | ✅ Automated |
+| TC-F4-40 | Valid storage key prefix accepted | ✅ Automated |
+| TC-F4-41 | Uploaded file sizes compared against validated sizes | ✅ Automated |
+| TC-F4-41 | File size mismatch beyond tolerance detected | ✅ Automated |
+| TC-F4-41 | Total size cap enforced on actual uploaded bytes | ✅ Automated |
+| TC-F4-41 | R2 sizes used (not client-reported) | ✅ Automated |
+| TC-F4-42 | Expired pending validations identified | ✅ Automated |
+| TC-F4-42 | Temp zip cleaned up on abandoned flow | ✅ Automated |
+| TC-F4-42 | Orphaned temp zips older than 24h identified | ✅ Automated |
+| TC-F4-40 | PC build wrong storage key prefix rejected | ✅ Automated |
+| TC-F4-40 | PC build correct storage key prefix accepted | ✅ Automated |
 
 ### WebGL Validation Tests (`webgl-validator.test.ts`)
 
@@ -140,6 +164,62 @@ These scenarios require human interaction or visual verification:
 **Fix**: Modified validation to parse Central Directory entries and count only non-directory entries.
 
 **File**: `src/lib/storage/webgl-validator.ts`
+
+### Bug 3: Client-Trusted expectedFiles (TC-F4-39)
+
+**Severity**: High (Security)
+
+**Description**: The `complete` endpoint trusted `expectedFiles` from the client request body. A modified client could send any list, bypassing server-side validation.
+
+**Root Cause**: The validation results were returned to the client and then re-submitted in the complete request, allowing tampering.
+
+**Fix**: Added `pending_validations` table to store validated file listings server-side. The `complete` endpoint now fetches the stored record instead of trusting client input.
+
+**Files**: 
+- `supabase/migrations/00004_pending_validations.sql`
+- `src/app/api/builds/register/route.ts`
+
+### Bug 4: R2 Binding Sizes Recorded as 0 (TC-F4-41)
+
+**Severity**: High (Security)
+
+**Description**: With the R2 binding path, uploaded file sizes were recorded as 0 and never compared against expected sizes. This allowed uploading files of any size.
+
+**Root Cause**: The R2 binding list code was hardcoding `size: 0` instead of using the actual size from `r2Bucket.list()`.
+
+**Fix**: Updated to properly read `obj.size` from R2 list results and compare against validated uncompressed sizes with a 5% tolerance.
+
+**File**: `src/app/api/builds/register/route.ts`
+
+### Bug 5: Client-Supplied Storage Key (TC-F4-40)
+
+**Severity**: High (Security)
+
+**Description**: The `validate` endpoint accepted a client-supplied `storageKey`, allowing a malicious user to point validation at another project's zip file.
+
+**Root Cause**: No server-side derivation or validation of the storage key prefix.
+
+**Fix**: Storage key is now derived server-side from `projectId` and `buildId`. PC builds also validate that the storage key starts with the correct project prefix.
+
+**File**: `src/app/api/builds/register/route.ts`
+
+### Bug 6: Orphaned Uploads (TC-F4-42)
+
+**Severity**: Medium (Resource Leak)
+
+**Description**: If a client abandoned the upload flow after uploading the temp zip (never calling `complete`), the temp zip and any partially-extracted files were orphaned forever.
+
+**Root Cause**: No cleanup mechanism for pending validations or orphaned uploads.
+
+**Fix**: 
+- Added `expires_at` column to `pending_validations` (default 24h)
+- Created cleanup API endpoint `/api/cleanup/abandoned-uploads`
+- Cleanup job deletes expired temp zips and partial uploads
+
+**Files**:
+- `supabase/migrations/00004_pending_validations.sql`
+- `src/app/api/cleanup/abandoned-uploads/route.ts`
+- `src/lib/storage/config.ts` (cleanup config)
 
 ## Test Architecture
 
