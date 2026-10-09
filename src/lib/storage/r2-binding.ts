@@ -47,6 +47,7 @@ export interface R2Bucket {
   delete(keys: string | string[]): Promise<void>;
   list(options?: R2ListOptions): Promise<R2Objects>;
   createMultipartUpload(key: string, options?: R2MultipartOptions): Promise<R2MultipartUpload>;
+  resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
 }
 
 interface R2PutOptions {

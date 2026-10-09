@@ -13,6 +13,16 @@
 
 import { getBuildStorageConfig, formatBytes, MiB } from './config';
 
+/**
+ * R2 Bucket의 최소 인터페이스 (ranged reads만 필요)
+ * Cloudflare의 전체 R2Bucket 타입과 호환되지만 필요한 메서드만 정의
+ */
+export interface R2BucketLike {
+  get(key: string, options?: { range?: { offset: number; length: number } }): Promise<{
+    arrayBuffer(): Promise<ArrayBuffer>;
+  } | null>;
+}
+
 export interface WebGLValidationResult {
   valid: boolean;
   error?: string;
@@ -180,7 +190,7 @@ function parseCentralDirectory(buffer: ArrayBuffer, entryCount: number): Central
  * @param fileSize 파일 전체 크기 (R2 head에서 얻음)
  */
 export async function validateWebGLZipFromR2(
-  bucket: R2Bucket,
+  bucket: R2BucketLike,
   key: string,
   fileSize: number
 ): Promise<WebGLValidationResult> {

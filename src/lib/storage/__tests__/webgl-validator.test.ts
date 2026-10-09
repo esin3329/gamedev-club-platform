@@ -230,3 +230,79 @@ describe('MiB constant', () => {
     expect(MiB).toBe(1048576);
   });
 });
+
+describe('Server-side validation (security)', () => {
+  it('큰 zip도 central directory만으로 검증 가능', async () => {
+    // 파일 내용은 크지만 CD는 작음
+    const files: Record<string, string> = {
+      'index.html': '<html>' + 'x'.repeat(10000) + '</html>',
+      'game.wasm': 'w'.repeat(50000),
+      'game.data': 'd'.repeat(50000),
+    };
+    const zipBuffer = await createTestZip(files);
+    
+    // 전체 크기 > 100KB
+    expect(zipBuffer.byteLength).toBeGreaterThan(100 * 1024);
+    
+    // CD 기반 검증은 여전히 빠르게 작동해야 함
+    const startTime = Date.now();
+    const result = await validateWebGLZip(zipBuffer);
+    const elapsed = Date.now() - startTime;
+    
+    expect(result.valid).toBe(true);
+    expect(elapsed).toBeLessThan(100); // 100ms 이내
+  });
+
+  it('expectedFiles 목록이 정확히 생성됨', async () => {
+    const zipBuffer = await createTestZip({
+      'Build/index.html': '<html></html>',
+      'Build/game.js': 'code',
+      'Build/game.wasm': 'wasm',
+    });
+    
+    const result = await validateWebGLZip(zipBuffer);
+    
+    expect(result.valid).toBe(true);
+    expect(result.basePath).toBe('Build/');
+    expect(result.files.length).toBe(3);
+    
+    // basePath가 있으면 클라이언트는 basePath를 제거한 경로로 업로드
+    const expectedPaths = result.files.map(f => 
+      result.basePath ? f.path.replace(result.basePath, '') : f.path
+    );
+    expect(expectedPaths).toContain('index.html');
+    expect(expectedPaths).toContain('game.js');
+    expect(expectedPaths).toContain('game.wasm');
+  });
+
+  it('파일 크기가 CD에 정확히 기록됨', async () => {
+    const content = 'exact content with 30 chars!';  // 29 chars
+    const contentLength = content.length;
+    
+    const zipBuffer = await createTestZip({
+      'index.html': content,
+    });
+    
+    const result = await validateWebGLZip(zipBuffer);
+    
+    expect(result.valid).toBe(true);
+    expect(result.files[0].uncompressedSize).toBe(contentLength);
+    expect(result.totalUncompressedSize).toBe(contentLength);
+  });
+
+  it('basePath 없는 경우 파일 경로 그대로 유지', async () => {
+    const zipBuffer = await createTestZip({
+      'index.html': '<html></html>',
+      'js/game.js': 'code',
+      'assets/sprite.png': 'png',
+    });
+    
+    const result = await validateWebGLZip(zipBuffer);
+    
+    expect(result.valid).toBe(true);
+    expect(result.basePath).toBe('');
+    expect(result.files.map(f => f.path)).toContain('index.html');
+    expect(result.files.map(f => f.path)).toContain('js/game.js');
+    expect(result.files.map(f => f.path)).toContain('assets/sprite.png');
+  });
+});

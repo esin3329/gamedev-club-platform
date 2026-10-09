@@ -243,6 +243,36 @@ class R2StorageClient {
   }
 
   /**
+   * 프리픽스로 오브젝트 목록 조회
+   */
+  async listObjects(prefix: string): Promise<Array<{ key: string; size: number }>> {
+    const objects: Array<{ key: string; size: number }> = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const command = new ListObjectsV2Command({
+        Bucket: this.config.bucketName,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      });
+
+      const result = await this.client.send(command);
+
+      if (result.Contents) {
+        for (const obj of result.Contents) {
+          if (obj.Key && obj.Size !== undefined) {
+            objects.push({ key: obj.Key, size: obj.Size });
+          }
+        }
+      }
+
+      continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return objects;
+  }
+
+  /**
    * 스토리지 키 생성
    */
   private buildStorageKey(
