@@ -181,13 +181,13 @@ BEGIN
 END $$;
 
 -- ============================================================================
--- TC-RLS-04: Cannot escalate own role to admin
+-- TC-RLS-04: Cannot escalate own role to admin (member)
 -- ============================================================================
 DO $$
 DECLARE
   new_role global_role;
 BEGIN
-  -- Set user to member and switch to authenticated role
+  -- Set user to active member and switch to authenticated role
   PERFORM test_set_user('33333333-3333-3333-3333-333333333333');
   SET LOCAL ROLE authenticated;
   
@@ -196,7 +196,7 @@ BEGIN
     UPDATE profiles SET global_role = 'admin' 
     WHERE id = '33333333-3333-3333-3333-333333333333';
   EXCEPTION WHEN OTHERS THEN
-    NULL; -- Expected to fail
+    NULL; -- Expected to fail (trigger blocks it)
   END;
   
   RESET ROLE;
@@ -207,10 +207,125 @@ BEGIN
   
   PERFORM record_test(
     'TC-RLS-04',
-    'Member cannot escalate own role to admin',
+    'Active member cannot escalate own role to admin',
     new_role = 'member',
     CASE WHEN new_role = 'admin' THEN 'Role was changed to admin!' ELSE NULL END
   );
+END $$;
+
+-- ============================================================================
+-- TC-RLS-04a: Pending user cannot escalate own role to admin
+-- ============================================================================
+DO $$
+DECLARE
+  new_role global_role;
+BEGIN
+  -- Set user to pending user
+  PERFORM test_set_user('44444444-4444-4444-4444-444444444444');
+  SET LOCAL ROLE authenticated;
+  
+  -- Try to escalate to admin
+  BEGIN
+    UPDATE profiles SET global_role = 'admin' 
+    WHERE id = '44444444-4444-4444-4444-444444444444';
+  EXCEPTION WHEN OTHERS THEN
+    NULL; -- Expected to fail (trigger blocks it)
+  END;
+  
+  RESET ROLE;
+  
+  -- Check role wasn't changed
+  SELECT global_role INTO new_role FROM profiles 
+  WHERE id = '44444444-4444-4444-4444-444444444444';
+  
+  PERFORM record_test(
+    'TC-RLS-04a',
+    'Pending user cannot escalate own role to admin',
+    new_role = 'member',
+    CASE WHEN new_role = 'admin' THEN 'Role was changed to admin!' ELSE NULL END
+  );
+END $$;
+
+-- ============================================================================
+-- TC-RLS-04b: Mixed update with allowed fields + role/status rejected
+-- Member updates name (allowed) + global_role (forbidden) in same statement
+-- The sensitive field change must be rejected while not escalating
+-- ============================================================================
+DO $$
+DECLARE
+  new_name TEXT;
+  new_role global_role;
+  new_status member_status;
+  update_succeeded BOOLEAN := FALSE;
+BEGIN
+  -- Set user to active member
+  PERFORM test_set_user('33333333-3333-3333-3333-333333333333');
+  SET LOCAL ROLE authenticated;
+  
+  -- Try to update name (allowed) AND global_role (forbidden) together
+  BEGIN
+    UPDATE profiles 
+    SET name = 'Updated Name', global_role = 'admin'
+    WHERE id = '33333333-3333-3333-3333-333333333333';
+    update_succeeded := TRUE;
+  EXCEPTION WHEN OTHERS THEN
+    update_succeeded := FALSE;
+  END;
+  
+  RESET ROLE;
+  
+  -- Check the result: role must NOT be admin
+  SELECT name, global_role INTO new_name, new_role FROM profiles 
+  WHERE id = '33333333-3333-3333-3333-333333333333';
+  
+  -- The trigger should have blocked the entire update due to role change attempt
+  PERFORM record_test(
+    'TC-RLS-04b',
+    'Mixed update (name + global_role) blocks role escalation',
+    new_role = 'member',
+    CASE WHEN new_role = 'admin' THEN 'Role was escalated to admin!' ELSE NULL END
+  );
+  
+  -- Reset name back to original for other tests
+  UPDATE profiles SET name = 'Member' WHERE id = '33333333-3333-3333-3333-333333333333';
+END $$;
+
+-- ============================================================================
+-- TC-RLS-04b-2: Pending user mixed update (name + status) rejected
+-- ============================================================================
+DO $$
+DECLARE
+  new_name TEXT;
+  new_status member_status;
+BEGIN
+  -- Set user to pending user
+  PERFORM test_set_user('44444444-4444-4444-4444-444444444444');
+  SET LOCAL ROLE authenticated;
+  
+  -- Try to update name (allowed) AND status (forbidden) together
+  BEGIN
+    UPDATE profiles 
+    SET name = 'Self Approved', status = 'active'
+    WHERE id = '44444444-4444-4444-4444-444444444444';
+  EXCEPTION WHEN OTHERS THEN
+    NULL; -- Expected to fail
+  END;
+  
+  RESET ROLE;
+  
+  -- Check the result: status must still be pending
+  SELECT name, status INTO new_name, new_status FROM profiles 
+  WHERE id = '44444444-4444-4444-4444-444444444444';
+  
+  PERFORM record_test(
+    'TC-RLS-04b',
+    'Pending user mixed update (name + status) blocks status change',
+    new_status = 'pending',
+    CASE WHEN new_status = 'active' THEN 'Status was changed to active!' ELSE NULL END
+  );
+  
+  -- Reset name back to original
+  UPDATE profiles SET name = 'Pending' WHERE id = '44444444-4444-4444-4444-444444444444';
 END $$;
 
 -- ============================================================================

@@ -8,10 +8,10 @@ This document maps P0 test scenario IDs from `test-scenarios-v1.1.md` to their a
 |----------|-----------|------------------------|--------|
 | Upload/Storage Config | 41 | 0 | 0 |
 | WebGL Validation | 50 | 0 | 0 |
-| WebGL Two-Phase Security | 21 | 0 | 0 |
+| WebGL Two-Phase Security | 26 | 0 | 0 |
 | Retention Logic | 19 | 0 | 0 |
-| RLS Policies | 10 | 0 | 0 |
-| **Total** | **141** | See below | See below |
+| RLS Policies | 13 | 0 | 0 |
+| **Total** | **149** | See below | See below |
 
 ## Running Tests
 
@@ -47,29 +47,36 @@ npm run test:all
 
 ### WebGL Two-Phase Upload Security Tests (`route.test.ts`)
 
+Per test-scenarios-v1.1.md TC ID mapping:
+
 | TC-ID | Description | Status |
 |-------|-------------|--------|
-| TC-F4-39a | ExpectedFiles stored in pending_validations table | ✅ Automated |
-| TC-F4-39b | Complete rejected without pending validation | ✅ Automated |
-| TC-F4-39c | Expired validation rejected | ✅ Automated |
-| TC-F4-40a | Storage key derived server-side from projectId/buildId | ✅ Automated |
-| TC-F4-40b | Malicious storage key prefix rejected | ✅ Automated |
-| TC-F4-40c | Valid storage key prefix accepted | ✅ Automated |
-| TC-F4-40d | PC build wrong storage key prefix rejected | ✅ Automated |
-| TC-F4-40e | PC build correct storage key prefix accepted | ✅ Automated |
-| TC-F4-41a | Uploaded file sizes compared against validated sizes | ✅ Automated |
-| TC-F4-41b | File size mismatch beyond tolerance detected | ✅ Automated |
-| TC-F4-41c | Total size cap enforced on actual uploaded bytes | ✅ Automated |
-| TC-F4-41d | R2 sizes used (not client-reported) | ✅ Automated |
-| TC-F4-42a | Expired pending validations identified | ✅ Automated |
-| TC-F4-42b | Temp zip cleaned up on abandoned flow | ✅ Automated |
-| TC-F4-42c | Orphaned temp zips older than BUILD_TEMP_MAX_AGE_HOURS | ✅ Automated |
-| TC-F4-46a | Validation status transitions pending -> processing | ✅ Automated |
-| TC-F4-46b | Second complete rejected (VALIDATION_ALREADY_USED) | ✅ Automated |
-| TC-F4-46c | Concurrent complete rejected (VALIDATION_IN_PROGRESS) | ✅ Automated |
-| TC-F4-46d | Expired validation cannot be replayed | ✅ Automated |
-| TC-F4-46e | Failed validation cannot be replayed | ✅ Automated |
-| TC-F4-46f | Valid status transitions for single-use pattern | ✅ Automated |
+| TC-F4-39a | Invalid zip temp file deleted on validation failure | ✅ Automated |
+| TC-F4-39b | Temp zip deleted after successful registration | ✅ Automated |
+| TC-F4-39c | Abandoned upload cleaned after BUILD_TEMP_MAX_AGE_HOURS | ✅ Automated |
+| TC-F4-39c-2 | Partial uploads also cleaned on abandonment | ✅ Automated |
+| TC-F4-42a | expectedFiles stored server-side in pending_validations | ✅ Automated |
+| TC-F4-42b | complete() fetches from DB, ignores client input | ✅ Automated |
+| TC-F4-42c | Missing files detected against server-stored list | ✅ Automated |
+| TC-F4-42d | Unexpected files detected against server-stored list | ✅ Automated |
+| TC-F4-43a | Storage key derived server-side from projectId/buildId | ✅ Automated |
+| TC-F4-43b | Malicious storage key pointing to other project rejected | ✅ Automated |
+| TC-F4-43c | Valid storage key for own project accepted | ✅ Automated |
+| TC-F4-43d | PC build storage key validated against project prefix | ✅ Automated |
+| TC-F4-44a | Uploaded file sizes compared against validated sizes | ✅ Automated |
+| TC-F4-44b | File size mismatch beyond 5% tolerance rejected | ✅ Automated |
+| TC-F4-44c | Total size cap enforced on actual uploaded bytes | ✅ Automated |
+| TC-F4-44d | R2 list() sizes used, not client-reported sizes | ✅ Automated |
+| TC-F4-45a | complete() requires pending_validations record | ✅ Automated |
+| TC-F4-45b | complete() requires matching projectId | ✅ Automated |
+| TC-F4-45c | complete() requires matching userId | ✅ Automated |
+| TC-F4-45d | Expired validation returns specific error | ✅ Automated |
+| TC-F4-46a | Atomic claim transitions status pending -> processing | ✅ Automated |
+| TC-F4-46b | Second complete rejected (VALIDATION_ALREADY_USED, 409) | ✅ Automated |
+| TC-F4-46c | Concurrent complete rejected (VALIDATION_IN_PROGRESS, 409) | ✅ Automated |
+| TC-F4-46d | Replaying expired validation rejected | ✅ Automated |
+| TC-F4-46e | Replaying failed validation rejected | ✅ Automated |
+| TC-F4-46f | Valid status transitions enforce single-use pattern | ✅ Automated |
 
 ### WebGL Validation Tests (`webgl-validator.test.ts`)
 
@@ -113,7 +120,10 @@ npm run test:all
 | TC-RLS-02 | Anonymous cannot read profiles | ✅ Automated |
 | TC-RLS-02 | Anonymous cannot read projects | ✅ Automated |
 | TC-RLS-03 | Member cannot update other profile | ✅ Automated |
-| TC-RLS-04 | Member cannot escalate own role to admin | ✅ Automated |
+| TC-RLS-04 | Active member cannot escalate own role to admin | ✅ Automated |
+| TC-RLS-04a | Pending user cannot escalate own role to admin | ✅ Automated |
+| TC-RLS-04b | Mixed update (name + global_role) blocks role escalation | ✅ Automated |
+| TC-RLS-04b | Pending user mixed update (name + status) blocks status change | ✅ Automated |
 | TC-RLS-05 | Non-member cannot create cards in other project | ✅ Automated |
 | TC-RLS-06 | Non-leader cannot approve recruitment applications | ✅ Automated |
 | TC-RLS-07 | Admin can update projects (documented behavior) | ✅ Automated |
