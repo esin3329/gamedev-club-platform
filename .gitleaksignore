@@ -1,0 +1,4 @@
+# Ignore test file with example AWS keys used for pattern detection testing
+# These are official AWS example keys from documentation, not real secrets
+8a9b1378f1fbfc0e604c60ff29332dcf7f32eb9f:scripts/__tests__/scan-secrets.test.ts:aws-access-token:64
+8a9b1378f1fbfc0e604c60ff29332dcf7f32eb9f:scripts/__tests__/scan-secrets.test.ts:aws-access-token:127

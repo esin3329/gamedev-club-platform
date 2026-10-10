@@ -42,9 +42,9 @@ npm run test:all
 | TC-F4-35 | Upload presigned URL expiry = 3600s | ✅ Automated |
 | TC-F4-35 | Download presigned URL expiry = 300s | ✅ Automated |
 | TC-F4-35 | Environment variable override for expiry times | ✅ Automated |
-| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS default 24h | ✅ Automated |
-| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS env var override | ✅ Automated |
-| TC-F4-42 | BUILD_TEMP_MAX_AGE_HOURS=12 sets 12h | ✅ Automated |
+| TC-F4-39c | BUILD_TEMP_MAX_AGE_HOURS default 24h | ✅ Automated |
+| TC-F4-39c | BUILD_TEMP_MAX_AGE_HOURS env var override | ✅ Automated |
+| TC-F4-39c | BUILD_TEMP_MAX_AGE_HOURS=12 sets 12h | ✅ Automated |
 
 ### WebGL Two-Phase Upload Security Tests (`route.test.ts`)
 
@@ -65,7 +65,7 @@ Per test-scenarios-v1.1.md TC ID mapping:
 | TC-F4-43c | Valid storage key for own project accepted | ✅ Automated |
 | TC-F4-43d | PC build storage key validated against project prefix | ✅ Automated |
 | TC-F4-44a | Uploaded file sizes compared against validated sizes | ✅ Automated |
-| TC-F4-44b | File size mismatch beyond 5% tolerance rejected | ✅ Automated |
+| TC-F4-44b | File size mismatch rejected (exact match required) | ✅ Automated |
 | TC-F4-44c | Total size cap enforced on actual uploaded bytes | ✅ Automated |
 | TC-F4-44d | R2 list() sizes used, not client-reported sizes | ✅ Automated |
 | TC-F4-45a | complete() requires pending_validations record | ✅ Automated |
@@ -233,7 +233,7 @@ These scenarios require human interaction or visual verification:
 
 **File**: `src/app/api/builds/register/route.ts`
 
-### Bug 6: Orphaned Uploads (TC-F4-42)
+### Bug 6: Orphaned Uploads (TC-F4-39c)
 
 **Severity**: Medium (Resource Leak)
 

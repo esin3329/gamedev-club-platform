@@ -546,7 +546,7 @@ async function handleWebGLComplete(
   }
 
   // 5. Verify actual file sizes match validated uncompressed sizes
-  // Allow some tolerance for encoding differences (up to 5% or 1KB, whichever is larger)
+  // Extracted file sizes are deterministic — require exact match
   const sizeMismatches: { path: string; expected: number; actual: number }[] = [];
   let totalActualSize = 0;
 
@@ -555,11 +555,7 @@ async function handleWebGLComplete(
     if (expected) {
       totalActualSize += uploaded.size;
       
-      // Size tolerance: 5% or 1KB, whichever is larger
-      const tolerance = Math.max(expected.uncompressedSize * 0.05, 1024);
-      const sizeDiff = Math.abs(uploaded.size - expected.uncompressedSize);
-      
-      if (sizeDiff > tolerance) {
+      if (uploaded.size !== expected.uncompressedSize) {
         sizeMismatches.push({
           path: uploaded.key,
           expected: expected.uncompressedSize,
