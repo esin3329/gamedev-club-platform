@@ -341,8 +341,8 @@ describe('WebGL Two-Phase Upload Security', () => {
 
     it('TC-F4-45b: complete() requires matching projectId', () => {
       // Query filters by projectId, so wrong project returns null
-      const queryProjectId = 'proj-123';
-      const storedProjectId = 'proj-456';
+      const queryProjectId: string = 'proj-123';
+      const storedProjectId: string = 'proj-456';
       
       const matches = queryProjectId === storedProjectId;
       
@@ -351,8 +351,8 @@ describe('WebGL Two-Phase Upload Security', () => {
 
     it('TC-F4-45c: complete() requires matching userId', () => {
       // Query filters by userId, so wrong user returns null
-      const queryUserId = 'user-123';
-      const storedUserId = 'user-456';
+      const queryUserId: string = 'user-123';
+      const storedUserId: string = 'user-456';
       
       const matches = queryUserId === storedUserId;
       

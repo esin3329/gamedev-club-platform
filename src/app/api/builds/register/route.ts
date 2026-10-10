@@ -650,10 +650,29 @@ async function handleWebGLComplete(
     .update({ status: 'completed' })
     .eq('id', pendingValidation.id);
 
-  // 10. 보관 정책 적용
+  // 10. Write .playable marker for build-host Worker to verify
+  const playableMarkerKey = `webgl/${projectId}/${buildId}/.playable`;
+  try {
+    if (r2Bucket) {
+      await r2Bucket.put(playableMarkerKey, JSON.stringify({
+        buildId,
+        projectId,
+        version,
+        registeredAt: new Date().toISOString(),
+      }), {
+        httpMetadata: { contentType: 'application/json' },
+      });
+    } else {
+      await storage.uploadPlayableMarker(projectId, buildId, version);
+    }
+  } catch (markerError) {
+    console.error('Failed to write .playable marker:', markerError);
+  }
+
+  // 11. 보관 정책 적용
   await runRetentionCleanup(supabase, projectId);
 
-  // 11. 원본 zip 삭제 (server-derived key)
+  // 12. 원본 zip 삭제 (server-derived key)
   try {
     await storage.deleteBuild(tempStorageKey);
   } catch {

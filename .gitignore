@@ -58,3 +58,4 @@ next-env.d.ts
 *.key
 # Don't ignore scripts/scan-secrets.sh
 !scripts/scan-secrets.sh
+workers/build-host/dist/
