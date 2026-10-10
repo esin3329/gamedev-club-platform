@@ -249,18 +249,15 @@ describe('WebGL Two-Phase Upload Security', () => {
       
       for (const uploaded of uploadedFiles) {
         const expected = expectedMap.get(uploaded.key.toLowerCase());
-        if (expected) {
-          const tolerance = Math.max(expected.uncompressedSize * 0.05, 1024);
-          if (Math.abs(uploaded.size - expected.uncompressedSize) > tolerance) {
-            sizeMismatches.push(uploaded.key);
-          }
+        if (expected && uploaded.size !== expected.uncompressedSize) {
+          sizeMismatches.push(uploaded.key);
         }
       }
       
       expect(sizeMismatches).toHaveLength(0);
     });
 
-    it('TC-F4-44b: file size mismatch beyond 5% tolerance rejected', () => {
+    it('TC-F4-44b: file size mismatch rejected (exact match required)', () => {
       const validatedFiles = [
         { path: 'index.html', uncompressedSize: 1000 },
         { path: 'game.js', uncompressedSize: 50000 },
@@ -268,7 +265,7 @@ describe('WebGL Two-Phase Upload Security', () => {
       
       const uploadedFiles = [
         { key: 'index.html', size: 1000 },
-        { key: 'game.js', size: 60000 }, // 20% larger - beyond tolerance
+        { key: 'game.js', size: 50001 }, // 1 byte larger - any mismatch rejected
       ];
       
       const expectedMap = new Map(validatedFiles.map(f => [f.path.toLowerCase(), f]));
@@ -276,15 +273,12 @@ describe('WebGL Two-Phase Upload Security', () => {
       
       for (const uploaded of uploadedFiles) {
         const expected = expectedMap.get(uploaded.key.toLowerCase());
-        if (expected) {
-          const tolerance = Math.max(expected.uncompressedSize * 0.05, 1024);
-          if (Math.abs(uploaded.size - expected.uncompressedSize) > tolerance) {
-            sizeMismatches.push({
-              path: uploaded.key,
-              expected: expected.uncompressedSize,
-              actual: uploaded.size,
-            });
-          }
+        if (expected && uploaded.size !== expected.uncompressedSize) {
+          sizeMismatches.push({
+            path: uploaded.key,
+            expected: expected.uncompressedSize,
+            actual: uploaded.size,
+          });
         }
       }
       
@@ -341,8 +335,8 @@ describe('WebGL Two-Phase Upload Security', () => {
 
     it('TC-F4-45b: complete() requires matching projectId', () => {
       // Query filters by projectId, so wrong project returns null
-      const queryProjectId = 'proj-123';
-      const storedProjectId = 'proj-456';
+      const queryProjectId: string = 'proj-123';
+      const storedProjectId: string = 'proj-456';
       
       const matches = queryProjectId === storedProjectId;
       
@@ -351,8 +345,8 @@ describe('WebGL Two-Phase Upload Security', () => {
 
     it('TC-F4-45c: complete() requires matching userId', () => {
       // Query filters by userId, so wrong user returns null
-      const queryUserId = 'user-123';
-      const storedUserId = 'user-456';
+      const queryUserId: string = 'user-123';
+      const storedUserId: string = 'user-456';
       
       const matches = queryUserId === storedUserId;
       
