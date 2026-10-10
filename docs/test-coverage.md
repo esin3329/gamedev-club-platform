@@ -144,6 +144,60 @@ Per test-scenarios-v1.1.md TC ID mapping:
 | TC-ENV-10g | gitleaks full history scan passes | ✅ Automated |
 | TC-ENV-10h | gitleaks blocks staged fake secret | ✅ Automated |
 
+### WebGL Build Host Tests (`workers/build-host/__tests__/build-host.test.ts`)
+
+| TC-ID | Description | Status |
+|-------|-------------|--------|
+| TC-F4-47a | Unity index.html served with correct MIME type | ✅ Automated |
+| TC-F4-47b | Unity .wasm served with application/wasm | ✅ Automated |
+| TC-F4-47c | Unity .data served with application/octet-stream | ✅ Automated |
+| TC-F4-47d | Unity .unityweb served correctly | ✅ Automated |
+| TC-F4-47e | .br files served with Content-Encoding: br | ✅ Automated |
+| TC-F4-47f | .gz files served with Content-Encoding: gzip | ✅ Automated |
+| TC-F4-47g | .framework.js.br served with correct type and encoding | ✅ Automated |
+| TC-F4-48a | Godot .pck served with application/octet-stream | ✅ Automated |
+| TC-F4-48b | Godot .js engine file served correctly | ✅ Automated |
+| TC-F4-48c | Godot .wasm served correctly | ✅ Automated |
+| TC-F4-48d | Godot favicon.png served correctly | ✅ Automated |
+| TC-F4-49a | Valid ETag generated from R2 object | ✅ Automated |
+| TC-F4-49b | index.html has short cache time | ✅ Automated |
+| TC-F4-49c | .wasm and .data have long immutable cache | ✅ Automated |
+| TC-F4-49d | If-None-Match returns 304 on match | ✅ Automated |
+| TC-F4-49e | If-None-Match returns 200 on mismatch | ✅ Automated |
+| TC-F4-50a | R2 object body is ReadableStream (not buffered) | ✅ Automated |
+| TC-F4-50b | Response uses R2 body directly | ✅ Automated |
+| TC-F4-50c | Content-Length set from R2 object size | ✅ Automated |
+| TC-F4-50d | Range request returns partial content | ✅ Automated |
+| TC-F4-50e | Memory-bounded streaming for 100 MiB file | ✅ Automated |
+| TC-F4-51a | Rejects path traversal attempts (..) | ✅ Automated |
+| TC-F4-51b | Rejects absolute paths in file segment | ✅ Automated |
+| TC-F4-51c | Rejects requests to non-webgl paths | ✅ Automated |
+| TC-F4-51d | Rejects builds without .playable marker | ✅ Automated |
+| TC-F4-51e | Accepts builds with .playable marker | ✅ Automated |
+| TC-F4-51f | Only allows GET and HEAD methods | ✅ Automated |
+| TC-F4-51g | Security headers present for HTML content | ✅ Automated |
+
+### Job Tracking Tests (`src/lib/cron/__tests__/job-tracking.test.ts`)
+
+| TC-ID | Description | Status |
+|-------|-------------|--------|
+| TC-JOB-09a | Job run record created with running status | ✅ Automated |
+| TC-JOB-09b | Job run updated to success with summary | ✅ Automated |
+| TC-JOB-09c | Job run updated to failed with error | ✅ Automated |
+| TC-JOB-09d | RLS policy allows admin read | ✅ Automated |
+| TC-JOB-09e | RLS policy blocks non-admin read | ✅ Automated |
+| TC-JOB-10a | Discord webhook payload structure | ✅ Automated |
+| TC-JOB-10b | Stale alert has warning color | ✅ Automated |
+| TC-JOB-10c | Failed alert has error color | ✅ Automated |
+| TC-JOB-10d | Alert skipped if webhook URL not set | ✅ Automated |
+| TC-JOB-10e | Alert sent if webhook URL is set | ✅ Automated |
+| TC-JOB-11a | Job is not stale if succeeded recently | ✅ Automated |
+| TC-JOB-11b | Job is stale if not succeeded in 24h | ✅ Automated |
+| TC-JOB-11c | Job is stale at exactly 24h boundary | ✅ Automated |
+| TC-JOB-11d | Staleness check runs before job execution | ✅ Automated |
+| TC-JOB-11e | Staleness warning message includes hours | ✅ Automated |
+| TC-JOB-11f | Admin page shows staleness warning | ✅ Automated |
+
 ## Needs External Accounts
 
 These tests require real external services (Supabase, R2, Discord, Cloudflare):

@@ -206,6 +206,33 @@ git push origin main
 
 배포 완료 후 Workers URL 확인 (예: `https://gamedev-club.workers.dev`)
 
+### 4.6 WebGL Build Host Worker 배포 (별도 Worker)
+
+WebGL 빌드를 서빙하는 별도의 Worker를 배포합니다.
+메인 앱과 다른 origin에서 실행되어 보안 격리를 제공합니다.
+
+```bash
+cd workers/build-host
+
+# 배포 (첫 배포 시 워커 이름 자동 생성)
+npx wrangler deploy
+
+# 번들 크기 확인 (dry-run)
+npx wrangler deploy --dry-run --outdir ./dist
+```
+
+배포 후 URL (예: `https://gamedev-build-host.<account>.workers.dev`)을
+메인 앱의 `WEBGL_SANDBOX_DOMAIN` 환경변수에 설정합니다.
+
+**build-host Worker 특징:**
+- R2에서 직접 스트리밍 (메모리 버퍼링 없음)
+- Unity/Godot 압축 파일 지원 (.br, .gz → Content-Encoding)
+- `.playable` 마커로 등록된 빌드만 서빙
+- Range 요청 및 ETag 조건부 요청 지원
+- Workers Cache API로 반복 요청 최적화
+
+**별도 wrangler.jsonc 위치:** `workers/build-host/wrangler.jsonc`
+
 ---
 
 ## 5단계: Cron 작업 설정
@@ -320,6 +347,57 @@ npm run build:cloudflare
 **CPU 제한 대응:**
 - WebGL zip 검증: R2 ranged reads로 central directory만 읽음
 - WebGL zip 추출: 클라이언트에서 수행 후 개별 파일 업로드
+
+### WebGL 플레이 세션당 Worker 요청 수
+
+WebGL 빌드를 플레이할 때 build-host Worker로 가는 요청 수입니다.
+일일 100,000 요청 한도를 기준으로 동시 플레이 가능 세션을 계산할 수 있습니다.
+
+#### Unity WebGL 기본 템플릿
+
+| 파일 유형 | 파일 수 | 비고 |
+|-----------|---------|------|
+| index.html | 1 | 진입점 |
+| Build/*.loader.js | 1 | Unity 로더 |
+| Build/*.framework.js.br | 1 | 프레임워크 (압축) |
+| Build/*.data.br | 1 | 에셋 데이터 (압축) |
+| Build/*.wasm.br | 1 | WebAssembly (압축) |
+| TemplateData/* | ~10 | 아이콘, CSS, 프로그레스바 등 |
+| StreamingAssets/* | 가변 | Addressables 사용 시 추가 |
+| **기본 합계** | **~15** | StreamingAssets 제외 |
+
+**일일 플레이 세션 용량**: 100,000 / 15 ≈ **6,600 세션/일**
+
+#### Godot 4 WebGL 기본 템플릿
+
+| 파일 유형 | 파일 수 | 비고 |
+|-----------|---------|------|
+| index.html | 1 | 진입점 |
+| *.js | 1 | 엔진 코드 |
+| *.wasm | 1 | WebAssembly |
+| *.pck | 1 | 패킹된 리소스 |
+| *.png, *.ico | ~3 | 아이콘, favicon |
+| **기본 합계** | **~7** | |
+
+**일일 플레이 세션 용량**: 100,000 / 7 ≈ **14,000 세션/일**
+
+#### Range 요청 및 캐싱 효과
+
+- **Range 요청**: Unity의 큰 .data 파일은 Range 요청으로 분할 다운로드될 수 있음 (요청 수 증가)
+- **Cache API**: build-host Worker가 응답을 캐시하므로, 같은 Edge PoP에서 반복 요청은 R2를 건드리지 않음
+- **브라우저 캐시**: 정적 파일은 `Cache-Control: immutable`로 브라우저에 장기 캐시됨
+
+#### 안전한 운영 기준
+
+| 시나리오 | 예상 요청/세션 | 일일 세션 용량 |
+|----------|---------------|---------------|
+| Unity 기본 | 15 | 6,600 |
+| Unity + Range (2x) | 30 | 3,300 |
+| Unity + StreamingAssets | 50+ | 2,000 |
+| Godot 기본 | 7 | 14,000 |
+
+**권장**: 소규모 동아리(일 100~500 플레이)는 무료 티어로 충분합니다.
+대규모 이벤트(게임잼 쇼케이스 등) 전에는 사용량을 모니터링하세요.
 
 ### Worker 번들 크기 측정
 

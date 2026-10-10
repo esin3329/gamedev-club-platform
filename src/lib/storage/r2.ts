@@ -200,6 +200,27 @@ class R2StorageClient {
   }
 
   /**
+   * Write .playable marker for build-host Worker verification
+   */
+  async uploadPlayableMarker(projectId: string, buildId: string, version: string): Promise<void> {
+    const key = `webgl/${projectId}/${buildId}/.playable`;
+    const body = JSON.stringify({
+      buildId,
+      projectId,
+      version,
+      registeredAt: new Date().toISOString(),
+    });
+    
+    const command = new PutObjectCommand({
+      Bucket: this.config.bucketName,
+      Key: key,
+      Body: body,
+      ContentType: 'application/json',
+    });
+    await this.client.send(command);
+  }
+
+  /**
    * WebGL 빌드 전체 삭제 (디렉토리 내 모든 파일)
    */
   async deleteWebGLBuild(projectId: string, buildId: string): Promise<void> {

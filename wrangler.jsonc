@@ -21,6 +21,7 @@
   ],
 
   // 환경변수 (민감하지 않은 것만, 민감 정보는 Cloudflare Dashboard에서 설정)
+  // DISCORD_ALERT_WEBHOOK_URL: cron job 실패 알림용 Discord webhook (Cloudflare Dashboard에서 secret으로 설정)
   "vars": {
     "ENVIRONMENT": "production"
   },
